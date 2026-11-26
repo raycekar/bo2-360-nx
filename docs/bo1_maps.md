@@ -79,6 +79,24 @@ project's own, and the pack's zone is encrypted with the key rebuilt from your d
   enum). Read the field order and sizes from its stream reads, then write a T5 clipMap reader that starts at a
   found header and checks itself with the counts.
 
+### Collision converted (2026-11-25)
+
+`tools/bo1_maps/t6clip.py <BO1 zone> <BO1 default.image.bin> <out.zone>` turns Nacht's col_map_sp into a BO2
+col_map_mp zone. It writes in BO2's Load_clipMap_t order and simulates block 5 positions with alignment, so shared
+pointers are offsets, as in retail zones. BO2's loader reads the output to its last byte, and every pointer
+resolves to the same data as in BO1: 4,759 brush sides with their planes, 918 nodes, 3,970 leaf brush nodes,
+2,874 leaf brush lists, brushes, leafs, verts, tris, AABB trees and collision materials.
+
+Lessons learned on the way:
+* T5 → T6 struct changes: `ClipInfo` grouping. dmaterial_t (char[64] + flags) becomes ClipMaterial (name pointer +
+  flags). cStaticModel gains `contents` (0x50 → 0x54). CollisionPartition drops borders (20 → 16 bytes).
+  cmodel_t gains `ClipInfo* info` (null in retail). Unchanged: planes, brush sides, nodes, brushes, leafs,
+  AABB trees, leaf brush nodes.
+* BO2 reads **one vec3** when a brush's `verts` is -1: brush verts must point into `ClipInfo.brushVerts`.
+* Some BO1 leaf brush nodes keep their brush list inline (not in `leafbrushes`). Those stay -1, written right
+  after the node array.
+* Still missing: static models (they need the XModels), mapEnts (the entity string), dynamic entities.
+
 ## Next
 
 1. Convert Nacht's map zone. BO1 360 zones decode (Salsa20 with the flag-0 key from the BO1 executable, one shared
