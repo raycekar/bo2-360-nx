@@ -44,6 +44,21 @@ project's own, and the pack's zone is encrypted with the key rebuilt from your d
 * Each row type in `zm/gametypesTable.csv` has its own index sequence (type 5: start locations; type 6: start
   location × mode), and the parsers read only up to the count rows.
 
+## Nacht's map zone: what is known
+
+* The BO1 zone is `zombie_cod5_prototype` (Rezurrection; "prototype" is BO1's internal name for Nacht). The
+  decoded zone has 903 assets, and the world assets are consecutive: com_map (#377), lightdef, 37 techsets,
+  gfx_map (#416), game_map_sp (#417), col_map_sp (#418). The asset data starts at 0x4A19.
+* The map name `maps/zombie_cod5_prototype.d3dbsp` is stored inline **once**; the other world assets point back to it.
+* OpenAssetTools' PC `clipMap_t` (T5) header pattern (name, isInUse, planeCount, planes = -1, ...) is **not**
+  found in the 360 zone. The 360 layout differs.
+* A run of 2,782 plane-like 20-byte records (unit normal, dist, type ≤ 3) sits at 0x12FE372. Its second byte after
+  the type reads 8, so it may not be `cplane_s` as on the PC. Unconfirmed.
+* **Next step:** take the exact 360 layout from BO1's own loader. In the BO1 TU11 image (`default.image.bin`), find
+  `Load_clipMap_t` / `Load_clipMap_tPtr` (the asset load switch is indexed by type; col_map_sp is type 12 in the 360
+  enum). Read the field order and sizes from its stream reads, then write a T5 clipMap reader that starts at a
+  found header and checks itself with the counts.
+
 ## Next
 
 1. Convert Nacht's map zone. BO1 360 zones decode (Salsa20 with the flag-0 key from the BO1 executable, one shared
