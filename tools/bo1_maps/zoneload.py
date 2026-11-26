@@ -1,26 +1,38 @@
-"""Loads a decoded BO1 (T5) Xbox 360 zone by running BO1's own zone loader code (default.image.bin, TU11) in a small
+"""Loads a decoded BO1 (T5) or BO2 (T6) Xbox 360 zone by running that game's own zone loader code in a small
 PowerPC interpreter. The stream API (Load_Stream, block push/pop, alloc, offset-to-pointer, strings, file reads) is
 implemented here; every Load_* function of the game runs as is, so the in-memory layout is exactly the 360's.
 
-usage: python -I t5load.py <zone> [--stop N] [--image default.image.bin]   (loads assets 0..N-1; prints each asset's type and header address)
+usage: python -I zoneload.py <zone> --image <decrypted program> [--game t5|t6] [--stop N]   (loads assets 0..N-1; prints each asset's type and header address)
 As a module: Zone(path).run(stop) then .mem / .assets [(index, type, header)].
 """
 import struct
 import sys
 
-IMAGE = "default.image.bin"  # the decrypted BO1 TU11 program (python tools/inspect/... or xexload); pass image=
+IMAGE = "default.image.bin"  # pass --image: BO1 TU11 default.image.bin (t5) or BO2 TU18 default_mp.image.bin (t6)
 BASE = 0x82000000
 T5_TYPES = """xmodelpieces physpreset physconstraints destructibledef xanim xmodel material pixelshader techset image sound
 sound_patch col_map_sp col_map_mp com_map game_map_sp game_map_mp map_ents gfx_map lightdef ui_map font menufile menu
 localize weapon weapondef weaponvariant snddriverglobals fx impactfx aitype mptype mpbody mphead character xmodelalias
 rawfile stringtable packindex xGlobals ddl glasses texturelist emblemset""".split()
 
-# Addresses in the TU11 image (found from the loader's code, see docs/bo1_maps.md).
-LOAD_STREAM, ALLOC, PUSH, POP, INC = 0x821F0668, 0x821F05F8, 0x821F04F0, 0x821F0578, 0x821F0610
-TO_POINTER, LOAD_XSTRING, LOAD_FILE, SCRIPT_STRING = 0x821F0790, 0x821F07B8, 0x821D9FF0, 0x821F0850
-LOAD_SCRIPT_STRINGS, ALLOC_ASSETS, LOAD_XASSET = 0x821DAB88, 0x821E49D0, 0x821EB078
-VAR_XASSETLIST, VAR_SCRIPTSTRINGLIST, VAR_XASSET = 0x8286C0D4, 0x8286C3A8, 0x8286BFC4
-G_STREAMPOS, G_STREAMINDEX = 0x82B98148, 0x82BA0168
+# Addresses of the stream API and the zone root in each game's program (found from the loader code, see
+# docs/bo1_maps.md). T5: BO1 TU11 default.image.bin (7 blocks); T6: BO2 TU18 default_mp.image.bin (8 blocks).
+PROFILES = {
+    "t5": dict(load_stream=0x821F0668, alloc=0x821F05F8, push=0x821F04F0, pop=0x821F0578, inc=0x821F0610,
+               to_pointer=0x821F0790, load_xstring=0x821F07B8, load_file=0x821D9FF0, script_string=0x821F0850,
+               link=0x821EC8B0, read_string=0x821DA178, read_some=0x821D9EB0,
+               load_script_strings=0x821DAB88, load_xasset=0x821EB078,
+               var_list=0x8286C0D4, var_script_strings=0x8286C3A8, var_xasset=0x8286BFC4,
+               g_pos=0x82B98148, g_index=0x82BA0168, g_blocks=0x82B98144, nblocks=7, list_size=0x10,
+               file_blocks=(0, 4, 5, 6), code=(0x821D8000, 0x821F2000), saverest=(0x825EA800, 0x825EAC00)),
+    "t6": dict(load_stream=0x822CC1D8, alloc=0x822CC168, push=0x822CC060, pop=0x822CC0E8, inc=0x822CC180,
+               to_pointer=0x822CC380, load_xstring=0x822CC3A8, load_file=0x822AD5D8, script_string=None,
+               link=0x822C6B18, read_string=0x822AD728, read_some=None,
+               load_script_strings=0x822AEFE8, load_xasset=0x822C4578,
+               var_list=0x82DB3D14, var_script_strings=0x82DB40A0, var_xasset=0x82DB3BA4,
+               g_pos=0x832E5CA0, g_index=0x832E5CC4, g_blocks=0x832E5C9C, nblocks=8, list_size=0x18,
+               file_blocks=(0, 5, 6), code=(0x822A0000, 0x822D0000), saverest=(0x82915E00, 0x82916200)),
+}
 BLOCK_BASE = 0x40000000  # block i lives at BLOCK_BASE + i * 0x08000000
 STACK_TOP, SCRATCH = 0x7F000000, 0x7E000000
 RETURN = 0x7FFFFFF0  # sentinel return address
@@ -105,7 +117,9 @@ def mask32(mb, me):
 
 
 class Zone:
-    def __init__(self, path, image=IMAGE):
+    def __init__(self, path, image=IMAGE, game="t5"):
+        self.game = game
+        self.p = P = PROFILES[game]
         self.mem = Mem()
         img = open(image, "rb").read()
         self.mem.write(BASE, img)
@@ -120,11 +134,11 @@ class Zone:
         self.unknown = {}
         self.assets = []
         self.stack = []
-        self.hle = {LOAD_STREAM: self.hle_load_stream, ALLOC: self.hle_alloc, PUSH: self.hle_push, POP: self.hle_pop,
-                    INC: self.hle_inc, TO_POINTER: self.hle_to_pointer, LOAD_XSTRING: self.hle_xstring,
-                    LOAD_FILE: self.hle_load_file, SCRIPT_STRING: lambda: None,
-                    0x821DA178: self.hle_read_string, 0x821D9EB0: self.hle_read_some,
-                    0x821EC8B0: self.hle_link}
+        hle = {"load_stream": self.hle_load_stream, "alloc": self.hle_alloc, "push": self.hle_push,
+               "pop": self.hle_pop, "inc": self.hle_inc, "to_pointer": self.hle_to_pointer,
+               "load_xstring": self.hle_xstring, "load_file": self.hle_load_file, "script_string": lambda: None,
+               "read_string": self.hle_read_string, "read_some": self.hle_read_some, "link": self.hle_link}
+        self.hle = {P[k]: f for k, f in hle.items() if P.get(k)}
         self.decoded = {}
         self.max_steps = 0
         self.pool = 0x30000000  # copies of asset headers
@@ -133,19 +147,19 @@ class Zone:
     # ---- stream state (g_streamPos / g_streamPosIndex kept in guest memory too) ----
     @property
     def pos(self):
-        return self.mem.u32(G_STREAMPOS)
+        return self.mem.u32(self.p["g_pos"])
 
     @pos.setter
     def pos(self, v):
-        self.mem.w32(G_STREAMPOS, v)
+        self.mem.w32(self.p["g_pos"], v)
 
     @property
     def index(self):
-        return self.mem.u32(G_STREAMINDEX)
+        return self.mem.u32(self.p["g_index"])
 
     @index.setter
     def index(self, v):
-        self.mem.w32(G_STREAMINDEX, v)
+        self.mem.w32(self.p["g_index"], v)
 
     def read_file(self, n):
         b = self.file[self.fpos:self.fpos + n]
@@ -156,9 +170,15 @@ class Zone:
 
     def hle_load_stream(self):
         at_start, ptr, size = self.r[3] & 0xFF, self.r[4] & 0xFFFFFFFF, s32(self.r[5])
+        self.trace = (getattr(self, "trace", []) + [(hex(self.lr), at_start, hex(ptr), size, self.index)])[-8:]
+        self.r[3] = 1
         if at_start and size:
-            if 1 <= self.index <= 3:  # runtime blocks: not in the file
+            if self.game == "t6" and self.index == 7:  # streamer reserve: BO2 neither reads nor advances
+                self.r[3] = 0
+                return
+            if self.index not in self.p["file_blocks"]:  # runtime blocks: not in the file
                 self.mem.write(ptr, bytes(size))
+                self.r[3] = 0
             else:
                 self.mem.write(ptr, self.read_file(size))
             self.pos = self.pos + size
@@ -446,7 +466,9 @@ class Zone:
 
     def known(self, tgt):
         """Functions we run: the loader code region and the register save/restore helpers."""
-        return 0x821D8000 <= tgt < 0x821F2000 or 0x825EA800 <= tgt < 0x825EAC00
+        a, b = self.p["code"]
+        c, d = self.p["saverest"]
+        return a <= tgt < b or c <= tgt < d
 
     def op31(self, pc, w, rd, ra, rb):
         r, m = self.r, self.mem
@@ -566,42 +588,64 @@ class Zone:
 
     # ---- the zone ----
     def run(self, stop=None, verbose=False):
-        hdr = self.read_file(0x24)
-        size, ext = struct.unpack_from(">II", hdr, 0)
-        blocks = struct.unpack_from(">7I", hdr, 8)
-        self.block_pos = {i: BLOCK_BASE + i * 0x08000000 for i in range(7)}
+        P = self.p
+        nb = P["nblocks"]
+        hdr = self.read_file(8 + 4 * nb)
+        blocks = struct.unpack_from(f">{nb}I", hdr, 8)
+        self.block_pos = {i: BLOCK_BASE + i * 0x08000000 for i in range(nb)}
         self.index, self.pos = 0, self.block_pos[0]
-        table = SCRATCH + 0x100  # g_streamBlocks: {data, size} per block, read by sub_821F0768
-        for i in range(7):
+        table = SCRATCH + 0x100  # g_streamBlocks: {data, size} per block
+        for i in range(nb):
             self.mem.w32(table + 8 * i, self.block_pos[i])
             self.mem.w32(table + 8 * i + 4, blocks[i])
-        self.mem.w32(0x82B98144, table)
+        self.mem.w32(P["g_blocks"], table)
+        main_block = 4 if self.game == "t5" else 5
         lst = SCRATCH
-        self.mem.write(lst, self.read_file(0x10))
-        self.mem.w32(VAR_XASSETLIST, lst)
-        self.r_push(4)
-        self.mem.w32(VAR_SCRIPTSTRINGLIST, lst)
-        self.call(LOAD_SCRIPT_STRINGS, 0)
+        self.r_push(main_block)
+        self.mem.write(lst, self.read_file(P["list_size"]))
+        self.mem.w32(P["var_list"], lst)
+        self.r_push(main_block)
+        self.mem.w32(P["var_script_strings"], lst)
+        self.call(P["load_script_strings"], 0)
         self.r_pop()
-        self.r_push(4)
-        count = self.mem.u32(lst + 8)
-        if self.mem.u32(lst + 12):
+        if self.game == "t6":  # depends: an array of string pointers
+            dcount, dptr = self.mem.u32(lst + 8), self.mem.u32(lst + 12)
+            if dptr:
+                self.r[3] = 3
+                self.hle_alloc()
+                arr = self.r[3]
+                self.mem.w32(lst + 12, arr)
+                self.mem.write(arr, self.read_file(4 * dcount))
+                self.pos = self.pos + 4 * dcount
+                for i in range(dcount):
+                    if self.mem.u32(arr + 4 * i) == 0xFFFFFFFF:
+                        self.mem.w32(arr + 4 * i, self.pos)
+                        e = self.file.index(b"\0", self.fpos)
+                        s_ = self.file[self.fpos:e + 1]
+                        self.fpos = e + 1
+                        self.mem.write(self.pos, s_)
+                        self.pos = self.pos + len(s_)
+        count_off = 8 if self.game == "t5" else 0x10
+        count, aptr = self.mem.u32(lst + count_off), self.mem.u32(lst + count_off + 4)
+        if aptr:
             self.r[3] = 3
             self.hle_alloc()
             assets = self.r[3]
-            self.mem.w32(lst + 12, assets)
+            self.mem.w32(lst + count_off + 4, assets)
             self.mem.write(assets, self.read_file(count * 8))
             self.pos = self.pos + count * 8
             n = count if stop is None else min(stop, count)
             for i in range(n):
                 a = assets + 8 * i
-                self.mem.w32(VAR_XASSET, a)
-                self.call(LOAD_XASSET, 0)
+                self.mem.w32(P["var_xasset"], a)
+                try:
+                    self.call(P["load_xasset"], 0)
+                except Exception as e:
+                    raise RuntimeError(f"asset {i} type {self.mem.u32(a)} (file {self.fpos:#x}): {e}") from e
                 t, h = self.mem.u32(a), self.mem.u32(a + 4)
                 self.assets.append((i, t, h))
                 if verbose:
-                    print(f"{i:4} {T5_TYPES[t] if t < len(T5_TYPES) else t:16} header {h:#010x}  file {self.fpos:#x}"
-                          f"  steps {self.steps}", flush=True)
+                    print(f"{i:4} type {t:3} header {h:#010x}  file {self.fpos:#x}  steps {self.steps}", flush=True)
         self.r_pop()
         return blocks
 
@@ -616,7 +660,8 @@ class Zone:
 def main():
     stop = int(sys.argv[sys.argv.index("--stop") + 1]) if "--stop" in sys.argv else None
     image = sys.argv[sys.argv.index("--image") + 1] if "--image" in sys.argv else IMAGE
-    z = Zone(sys.argv[1], image)
+    game = sys.argv[sys.argv.index("--game") + 1] if "--game" in sys.argv else "t5"
+    z = Zone(sys.argv[1], image, game)
     if "--max-steps" in sys.argv:
         z.max_steps = int(sys.argv[sys.argv.index("--max-steps") + 1])
     try:

@@ -63,7 +63,18 @@ project's own, and the pack's zone is encrypted with the key rebuilt from your d
   216 materials, 4,759 brush sides, 918 nodes, 1,089 leafs, 12,461 verts. BO1's `Load_clipMap_t` is 0x821E5B28
   (0x14C bytes). BO2's is 0x822BD3C8 (0x14C bytes, with `ClipInfo` inline at +8, loaded by 0x822BCB08; then
   pInfo +0x50, static models +0x54/+0x58, nodes +0x5C/+0x60, leafs +0x64/+0x68); `Load_Stream` 0x822CC1D8.
-* Old note: take the exact 360 layout from BO1's own loader. In the BO1 TU11 image (`default.image.bin`), find
+* **`tools/bo1_maps/zoneload.py` now runs both games' loaders** (`--game t5|t6`). BO2 profile (TU18
+  `default_mp.image.bin`): `Load_Stream` 0x822CC1D8 (file blocks 0, 5, 6; 1–2 zeroed; 3–4 deferred to the end of
+  the file; 7 neither read nor advanced), alloc 0x822CC168, inc 0x822CC180, push/pop 0x822CC060/0x822CC0E8,
+  pointer 0x822CC380 / alias 0x822CC358, string 0x822CC3A8 → read 0x822AD728, file read 0x822AD5D8, link
+  0x822C6B18, script strings 0x822AEFE8, `Load_XAsset` 0x822C4578 (root 0x822ADA38). Nuketown Zombies
+  (`zm_nuked.ff`, 148 MB) loads completely; its world assets are gfx_map #1040, game_map_mp #1041 and
+  col_map_mp #1045. Nuketown's clipMap leaves `brushBounds`/`brushContents` null.
+* Header comparison (360 offsets; T5 left, T6 right): BO1 counts and pointers sit at 0x08–0xB0 in PC order. BO2
+  groups planes, materials, brush sides, leaf brush nodes, leaf brushes, brush verts, uinds and brushes into
+  `ClipInfo` (0x08–0x4C), then pInfo 0x50, staticModels 0x54, nodes 0x5C, leafs 0x64 (0x2C bytes each, as in T5),
+  verts 0x6C, tris 0x74, partitions 0x80, aabbTrees 0x88, cmodels 0x90, numClusters 0x98, visibility 0xA0,
+  mapEnts 0xA8, box_brush 0xAC. BO1-only: leafsurfaces, borders. In the BO1 TU11 image (`default.image.bin`), find
   `Load_clipMap_t` / `Load_clipMap_tPtr` (the asset load switch is indexed by type; col_map_sp is type 12 in the 360
   enum). Read the field order and sizes from its stream reads, then write a T5 clipMap reader that starts at a
   found header and checks itself with the counts.
