@@ -321,10 +321,14 @@ def convert(m, h, data, material=None, mats=None):
     sf0, sf1, sb0, sb1 = BASE["tail_smodels"]
     sorted_idx = w.arr(0x400, static_n, 2) + b"".join(struct.pack(">H", static_n + k) for k in range(kstatic))
     out = bytearray()
+    # padding surfaces draw nothing (no triangles) but carry a real material: some renderer paths read every listed
+    # surface's material, and a null one crashed in game (read of 0x50: material + 80)
+    first_mat = mat_list["at"] + 8 * BASE["mat_count"] if mats else mat
+    dummy_surface = bytes(64) + u32(ref(first_mat)) + bytes([0, 0, 0, common[7]]) + bytes(24)
     for s in range(surf_n):
         b = surfs[80 * s:80 * s + 80]
         if s == static_n:
-            out += bytes(96) * kstatic  # the dummy static surfaces
+            out += dummy_surface * kstatic  # the dummy static surfaces
         center, scale, vo0, n, base_index, tc = surf_info[s]
         kind = mats["surf_kind"][s] if mats else "opaque"
         if kind == "hidden":  # sky and shadow-only surfaces: no triangles (BO2 draws its sky with the sky model)
@@ -340,7 +344,7 @@ def convert(m, h, data, material=None, mats=None):
         out += u32(ref(mref)) + bytes([0, probe, light, flags])
         out += b[0x38:0x50]
     if surf_n == static_n:
-        out += bytes(96) * kstatic
+        out += dummy_surface * kstatic
     surface_bytes = bytes(out)
 
     pieces = (mats["pieces"] + [p for k in range(mat_list["pad"]) for p in mats["pad"](k)]) if mats else []
@@ -368,7 +372,7 @@ def convert(m, h, data, material=None, mats=None):
         o.put(sorted_idx, 1)
         o.align(3)
         o.copy(data[sf0:sf1], sb1 - sb0)
-        o.put(surface_bytes + bytes(96) * ndummy, 15)
+        o.put(surface_bytes + dummy_surface * ndummy, 15)
         o.align(3)
         return ndummy
 

@@ -158,7 +158,11 @@ visibility data / static model instances copied); with `--materials` also the ma
   triCount, baseIndex, material (alias to `&materialMemory[i].material`), lightmap/probe/light/flags, bounds.
 * Materials must be quantized-world ones (`wq`/`wqc`, flags 0x30); `wpc` expects another vertex format.
 * Alignment found the hard way: the tail's copied part holds 128-aligned data; dummy static surfaces (outside every
-  draw range) pad the sorted list so the asset's change reaches a multiple of 4096.
+  draw range) pad the sorted list so the asset's change reaches a multiple of 4096. They carry a real material and no
+  triangles: with a null material the renderer crashed in play (sub_828A72F0 reads material + 80 for each surface of
+  a draw list; crash dumps: `dmp_stack.py` + `llvm-symbolizer` with `bo2zm.pdb`).
+* Open: a second in-play crash, a memset to guest 0x20 (thread F800002C, game code), seen since the first render
+  world build.
 
 ### Lightmaps (`t6lightmap.py`)
 
