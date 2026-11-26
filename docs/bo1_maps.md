@@ -63,11 +63,10 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
 1. **Textures (in progress).** Done: BO1's image packs decode (LZO1X, below) and `splice_world.py --materials
    --paks ...` gives each of Nacht's 72 color textures its own material with its pixels (largest mip only).
    In game: textures show. The template's own normal map made every surface sparkle (fine white dots); the new
-   materials now use the base zone's `$identitynormalmap` (`--keep-normal` keeps the template's). Still wrong:
-   the whole view, the gun included, is dark and green. A white lightmap (`--lm-flat`) or 3x the light
-   (`--lm-gain`, default 3) barely changes it, and the gun isn't lit by the lightmap, so the cause is probably
-   global: the light grid and reflection probes are still Nuketown's. Next: convert the light grid and probes;
-   then Nacht's normal maps, mips, sky.
+   materials now use the base zone's `$identitynormalmap` (`--keep-normal` keeps the template's). The dark green
+   look came from Nuketown's lighting (Lighting, below); with it neutralised the map shows its own warm light.
+   Next: Nacht's own light grid, lights and reflection probes (the gun still picks up a green tint, likely from
+   Nuketown's probe cubemaps); then Nacht's normal maps, mips, sky.
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
    `zmcore_basicwoodbarrier` and its 12 board animations (then `nacht_ents.py --windows`).
@@ -174,6 +173,21 @@ visibility data / static model instances copied); with `--materials` also the ma
 * `xenos_tex.py`: Xenos tiling, 8-in-16 swap, DXT/5_6_5 decode to PNG.
 * Shaders: `tools/inspect/ff_shaders.py` (`find_shaders` also works on a decoded BO1 zone) and the kit's
   `bo2zm_hlsl.exe <in> <out> <shader_common.h>` translate them.
+
+### Lighting (`splice_world.neutral_lighting`)
+
+* BO2 GfxLightGrid at GfxWorld 0x22C: sunPrimaryLightIndex, mins/maxs (3 x u16 each), offset (float), rowAxis,
+  colAxis, rowDataStart 0x248, rawRowData size/ptr 0x24C/0x250, entries 0x254/0x258 (4 B: u16 coeff index, primary
+  light, visibility), colors 0x25C/0x260 (none in Nuketown), coeffs 0x264/0x268 (27 x u16 biased by 0x8000: 9 SH
+  terms x rgb, DC first), sky grid volumes 0x26C/0x270. GfxWorld 0x104/0x108: sun primary light index, primary
+  light count.
+* ComWorld (com_map, asset type 14): header 16 B, name, then ComPrimaryLight records of 0xC4 B (type u8: 1 sun,
+  2 spot, 5 omni; colour vec3 at +8). Nuketown's are cyan and green and placed in its coordinates.
+* What made Nacht dark and green: Nuketown's grid (blue-green, red ~30% low) lit models; surfaces kept BO1's
+  primary light and probe indices, which picked Nuketown's lights (green/cyan, overexposed walls) and probes.
+* For now: every grid sample is the same grey (`--grid-level`, default 0.3 x Nuketown's median), Nuketown's primary
+  lights (sun included) are dark, surfaces use light 0 and probe 0 (`--surface-lights` / `--surface-probes` keep
+  BO1's indices; `--keep-lighting` skips all of it). Lightmap gain 3 is right with these.
 
 ### Materials (`t6mat.py`)
 

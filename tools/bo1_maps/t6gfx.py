@@ -32,6 +32,9 @@ BASE = {
     "outdoor": (0x3DC6299, 0x3DC6376, 0x10),
 }
 BLOCK = 5
+# a surface's primary light index is BO1's numbering, which picks one of the base map's lights; False: none (0)
+SURFACE_LIGHTS = True
+SURFACE_PROBES = True  # likewise the reflection probe index; False: probe 0
 
 
 def u32(v):
@@ -325,8 +328,9 @@ def convert(m, h, data, material=None, mats=None):
         out += b[0x00:0x0C] + u32(vo0) + b[0x10:0x1C] + u32(0)  # vertex offsets: vd0 bytes, second stream
         out += u32(0) + b[0x28:0x2C] + struct.pack(">HHI", n, tc, base_index)
         mref = mat_list["at"] + 8 * (BASE["mat_count"] + mats["surf_map"][s]) if mats else mat
-        out += u32(ref(mref)) + bytes([0, min(b[0x35], BASE["probes"] - 1),
-                                      min(b[0x36], BASE["primary_lights"] - 1)]) + common[7:8]
+        light = min(b[0x36], BASE["primary_lights"] - 1) if SURFACE_LIGHTS else 0
+        probe = min(b[0x35], BASE["probes"] - 1) if SURFACE_PROBES else 0
+        out += u32(ref(mref)) + bytes([0, probe, light]) + common[7:8]
         out += b[0x38:0x50]
     if surf_n == static_n:
         out += bytes(96) * kstatic

@@ -19,6 +19,10 @@ NUKED_LM0 = 0x16C000
 NUKED_LM_HEADER = 0x349C597  # Nuketown's lightmap 0 image header (non-streamed): the new images' template
 TEMPLATE_MATERIAL = 0x3DC4FCC  # Nuketown's wqc/wood_burned record: the new materials' template
 FLAT_NORMAL_REF = 0xA01548B5  # Nuketown's reference to $identitynormalmap (image_refs.py): the new materials' normal map
+# Nuketown's light grid coefficients (file position in the base zone, count; GfxWorld 0x264/0x268): 27 u16 each,
+# biased by 0x8000, 9 SH terms x rgb, DC first. Its samples are blue-green and sit where Nuketown's geometry was.
+NUKED_GRID_COEFFS = (0x3B194B6, 47900)
+COM_MAP = 14  # ComWorld asset type: Nuketown's primary lights (0xC4 B each: type, colour vec3 at +8)
 BO2_IMAGE = "work/dump_tu18/default_mp.image.bin"  # the decrypted TU18 program (the build writes it)
 
 
@@ -175,6 +179,30 @@ def fit_aligned(build, end, label, align=4096):
     raise SystemExit(f"{label}: no padding ends at {target:#x}")
 
 
+def neutral_lighting(new, base, fp, level):
+    """Until Nacht's own light grid and lights are converted: every light grid sample becomes the same grey (level x
+    Nuketown's median brightness, no direction) and Nuketown's primary lights (the sun included) go dark."""
+    import numpy as np
+    pos, count = NUKED_GRID_COEFFS
+    old = base[pos:pos + 54 * count]
+    at = new.find(old[:54 * 16])
+    assert at >= 0 and new.find(old[:54 * 16], at + 1) < 0, "light grid not found once in the new zone"
+    dc = np.frombuffer(old, ">u2").reshape(count, 27)[:, :3].astype(np.int32) - 0x8000
+    grey = int(np.median(dc.mean(axis=1)) * level)
+    grid = np.full((count, 27), 0x8000, np.int32)
+    grid[:, :3] += grey
+    new = bytearray(new)
+    new[at:at + 54 * count] = grid.astype(">u2").tobytes()
+    com = [r for r in fp if r[1] == COM_MAP][-1][2]  # before the render world: same position in the new zone
+    n_lights = struct.unpack_from(">I", new, com + 8)[0]
+    first = new.index(b"\0", com + 16) + 1
+    first += -(first - com) % 4
+    for k in range(1, n_lights):
+        struct.pack_into(">3f", new, first + 0xC4 * k + 8, 0.0, 0.0, 0.0)
+    print(f"lighting: light grid grey ({grey:#x}), {n_lights - 1} primary lights dark")
+    return bytes(new)
+
+
 def main():
     bo2_zone, fp_path, bo1_zone, bo1_image, out = sys.argv[1:6]
     opt = dict(zip(sys.argv[6::2], sys.argv[7::2]))  # --ents <translated entity string> --aliases <json>
@@ -196,6 +224,9 @@ def main():
     gfx_edits, gfx_patches, mg = [], [], 0
     if relocs and "--gfx" in sys.argv:  # the render world too (t6gfx.py); it comes before the game world
         import t6gfx
+        # BO1's per-surface light and probe indices would pick Nuketown's lights and probes: off unless asked for
+        t6gfx.SURFACE_LIGHTS = "--surface-lights" in sys.argv
+        t6gfx.SURFACE_PROBES = "--surface-probes" in sys.argv
         gfx_h = [hh for i, t, hh in z5.assets if t == 18][-1]
         base = open(bo2_zone, "rb").read()
         mat = t6gfx.find_material(bo2_zone, BO2_IMAGE, opt["--material"], base) if "--material" in opt else None
@@ -254,6 +285,8 @@ def main():
               f"{len(R.rebuild.dangling)} pointed into replaced data")
     else:
         new = d[:gf0] + bytes(g.out) + d[gf1:cf0] + bytes(c.out) + d[cf1:]
+    if gfx_edits and "--keep-lighting" not in sys.argv:
+        new = neutral_lighting(new, d, fp, float(opt.get("--grid-level", "0.3")))
     if gfx_edits:  # the lightmap: Nacht's light in Nuketown's lightmap 0 (same size, in the deferred block 3 at the end)
         import t6lightmap as L
         bo1 = open(bo1_zone, "rb").read()
