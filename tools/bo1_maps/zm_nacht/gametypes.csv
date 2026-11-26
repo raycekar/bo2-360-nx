@@ -1,0 +1,4 @@
+5,@maxnum_startloc+0,zm_nacht,nacht,ZMUI_NACHT_STARTLOC_CAPS,ZMUI_NACHT_STARTLOC_DESC,menu_zm_map_nuked_blit_nuked,1,0,0,180,-50,,,,,ZMUI_NACHT_STARTLOC,100,-90
+6,@startloc_gamemode_map+0,zm_nacht,nacht,zstandard,2,left,YES,,,,,,,,,,,
+=maxnum_startloc,@maxnum_startloc+1,,,,,,,,,,,,,,,,,
+=startloc_gamemode_map,@startloc_gamemode_map+1,,,,,,,,,,,,,,,,,

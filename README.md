@@ -21,6 +21,13 @@
 
 ---
 
+> **bo2-360-nx_extended**: this fork adds to the recompilation project. So far:
+> * the Nuketown Zombies fix (installed DLC is reported as fully licensed, so Nuketown shows up offline), and
+> * an **optional, experimental Black Ops 1 maps add-on** ("the BO1 map, with BO2 gameplay"). Like the DLC, you
+>   build it from your own game files with `tools/install_bo1_maps.py`, and it stays off unless installed.
+>   Nacht der Untoten already appears on the Zombies globe with a working start location menu. The map itself is
+>   being converted. See [docs/bo1_maps.md](docs/bo1_maps.md).
+
 bo2-360-nx is a static recompilation of Black Ops II (Xbox 360, Title Update 18). The game's PowerPC code is
 translated ahead of time into C++ and compiled for the Switch's ARM cores and for x86-64 PCs, so nothing is emulated
 while you play, and a Vulkan renderer of its own draws the game.

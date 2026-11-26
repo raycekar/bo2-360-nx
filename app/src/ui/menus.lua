@@ -3460,7 +3460,14 @@ local function Install()
   if state.zombies() then
     WrapField(createMenu, "HUD", WrapMenu(PatchHud))
     WrapField(_G, "HUD_FirstSnapshot_Zombie", state.wrapFirstSnapshot)
-    WrapField(createMenu, "SelectMapZM", WrapMenu(TestPickMap))
+    -- One wrapper only (WrapField skips a field it already wrapped): the custom maps globe code joins in at call time.
+    WrapField(createMenu, "SelectMapZM", function(original)
+      local inner = WrapMenu(TestPickMap)(original)
+      return function(...)
+        local f = state.wrapGlobe and state.wrapGlobe(inner) or inner
+        return f(...)
+      end
+    end)
     WrapField(createMenu, "Loading", WrapLoading)
   end
   WrapField(createMenu, "SplitscreenGameLobby", WrapMenu(function(menu, controller)
@@ -3505,6 +3512,65 @@ local function Install()
     -- Change Map creates playlist buttons when a category opens, after the menu itself was built.
     -- Their lobby refresh also calls enable for maps without a playlist lock index.
     WrapField(CoD.PlaylistButton, "new", WrapSteadyButtonNew)
+    -- Custom maps (Black Ops 1 maps, tools/install_bo1_maps.py; the program sets bo2zm_custom_maps_ui when the
+    -- bo2zm_custom_maps setting is on). The globe builds its map list once, while the DLC packs mount, which is
+    -- before a pack's own zone (with the map's rows, merged by bo2zm_dlc.cpp) is loaded. So the globe gets the
+    -- custom maps here too: GetMaps lists them and TableLookup answers for their rows until the merged table is in
+    -- place. Lookups for any other key, and every answer the game's table has, pass through unchanged.
+    if UIExpression.DvarString(nil, "bo2zm_custom_maps_ui") == "1" then
+      local customMaps = state.customMaps
+      if not customMaps then
+        -- zm/mapsTable.csv columns 0-19 (16 and 17: the pin's longitude and latitude on the globe).
+        customMaps = {
+          zm_nacht = {[0] = "zm_nacht", "cdc", "cia", "ZMUI_NACHT", "menu_zm_map_signpost_transit", "7",
+            "ZMUI_DESC_MAP_NACHT", "compass_overlay_map_transit", "SMALL", "NO", "YES", "7", "ZMUI_CDC_SHORT",
+            "ZMUI_CIA_SHORT", "faction_cdc", "faction_cia", "60", "20", "0", "top", pack = 7},
+        }
+        state.customMaps = customMaps
+      end
+      WrapField(UIExpression, "TableLookup", function(original)
+        return function(controller, tableName, keyColumn, key, column, ...)
+          local value = original(controller, tableName, keyColumn, key, column, ...)
+          local row = customMaps[key]
+          if row and (value == nil or value == "") and tonumber(keyColumn) == 0 then
+            return row[tonumber(column)] or value
+          end
+          return value
+        end
+      end)
+      -- Inside the globe only (state.inGlobe, set by the SelectMapZM wrapper above): elsewhere the game's own code
+      -- sorts and reads the list, and needs the merged table first.
+      WrapField(CoD.SelectMapZombie, "GetMaps", function(original)
+        return function(...)
+          local maps = original(...) or {}
+          if state.inGlobe then
+            local listed = {}
+            for _, map in pairs(maps) do
+              listed[map.loadName] = true
+            end
+            for loadName, row in pairs(customMaps) do
+              if not listed[loadName] then
+                table.insert(maps, {loadName = loadName, name = string.upper(loadName) .. "_CAPS",
+                  mapPackTypeIndex = row.pack})
+              end
+            end
+          end
+          return maps
+        end
+      end)
+      state.wrapGlobe = state.wrapGlobe or function(original)
+        return function(...)
+          state.inGlobe = true
+          local ok, menu = pcall(original, ...)
+          state.inGlobe = false
+          if not ok then
+            Log("custom maps: the map globe failed: " .. tostring(menu))
+            error(menu, 0)
+          end
+          return menu
+        end
+      end
+    end
   end
 end
 

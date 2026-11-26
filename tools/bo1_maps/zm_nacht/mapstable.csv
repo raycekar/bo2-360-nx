@@ -1,0 +1,2 @@
+zm_nacht,cdc,cia,ZMUI_NACHT,menu_zm_map_signpost_transit,@maxnum_map+0,ZMUI_DESC_MAP_NACHT,compass_overlay_map_transit,SMALL,NO,YES,7,ZMUI_CDC_SHORT,ZMUI_CIA_SHORT,faction_cdc,faction_cia,60,20,0,top
+=maxnum_map,@maxnum_map+1,,,,,,,,,,,,,,,,,,
