@@ -8,7 +8,7 @@ it. Nothing from either game is stored in this repository.
 
 | Map | Globe | Playable | Looks like |
 | --- | --- | --- | --- |
-| Nacht der Untoten (`zm_nacht`) | pin and start menu (TranZit's pin and Nuketown's map images for now) | yes: Nacht's collision, paths, entities and an edited map script; round 1, zombies come in through open windows | Nacht's geometry with Nacht's lightmap light, one stand-in Nuketown material; no props. Nacht's own textures: built, not yet tested in game |
+| Nacht der Untoten (`zm_nacht`) | pin and start menu (TranZit's pin and Nuketown's map images for now) | yes: Nacht's collision, paths, entities and an edited map script; zombies come in through open windows (no boards yet) | Nacht's geometry, textures (decals and blend layers as overlays) and lightmap light; neutral light grid; no props |
 
 Known: opening the globe in the first seconds after start can miss pins (it builds its list once while the packs
 still mount); backing out and reopening fixes it.
@@ -60,20 +60,18 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
 
 ## Remaining plan
 
-1. **Textures (in progress).** Done: BO1's image packs decode (LZO1X, below) and `splice_world.py --materials
-   --paks ...` gives each of Nacht's 72 color textures its own material with its pixels (largest mip only).
-   In game: textures show. The template's own normal map made every surface sparkle (fine white dots); the new
-   materials now use the base zone's `$identitynormalmap` (`--keep-normal` keeps the template's). The dark green
-   look came from Nuketown's lighting (Lighting, below); with it neutralised the map shows its own warm light.
-   Decals and blend layers use BO2 decal/blend templates; sky and shadow-only surfaces are hidden (Surface kinds).
-   Next (optional polish): Nacht's own light grid, lights and probe cubemaps; then Nacht's normal maps, mips, sky.
+1. **Play test.** The gib crash fix (dynamic-entity pool) needs a session with the ray gun and explosives.
+   Done for the look: Nacht's textures (largest mip) with `$identitynormalmap`, neutral lighting, decal/blend
+   overlays, hidden sky surfaces (sections below). Polish later: Nacht's own light grid, lights and probe cubemaps,
+   normal maps, mips, sky.
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
    `zmcore_basicwoodbarrier` and its 12 board animations (then `nacht_ents.py --windows`).
-3. **Clean-ups.** Nuketown's outdoor bounds and static models (its 13 occluders, GfxWorld 0x438/0x43C, 68 B: flags,
-   name[16], 4 points, hid Nacht's walls by view angle: `splice_world.no_occluders` collapses them to a point); Nacht's 20 primary lights (com_map);
-   sounds and music; pin and start-location images; globe order and the early-globe pin race (rebuild pins after
-   `ReparseMapsTable`); the diagnostic Lua wrappers.
+3. **Clean-ups.** Nuketown's outdoor bounds and static models; Nacht's 20 primary lights (com_map); sounds and music;
+   pin and start-location images; globe order and the early-globe pin race (rebuild pins after `ReparseMapsTable`;
+   it also stops automated test starts with Lua error 983209891:120, intermittently); the diagnostic Lua wrappers.
+   Done: Nuketown's 13 occluders (GfxWorld 0x438/0x43C, 68 B: flags, name[16], 4 points) hid Nacht's walls by view
+   angle; `splice_world.no_occluders` collapses them to a point.
 4. **Install path.** Fold the pipeline into `tools/install_bo1_maps.py`.
 5. **More maps.** Relocation removes the size limits (table below); each map needs its own entity/zone translation and
    map script edits.

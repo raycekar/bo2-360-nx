@@ -1,236 +1,189 @@
 <p align="center">
-  <img src="docs/images/banner.png" alt="Call of Duty: Black Ops II 360-NX" width="100%">
+  <img src="docs/images/banner.png" alt="bo2-360-nx_extended" width="100%">
 </p>
 
 <p align="center">
-  <b>Call of Duty: Black Ops II for the Nintendo Switch and Windows, recompiled from the Xbox 360.</b><br>
-  Zombies, Multiplayer and Campaign, running as native code.
+  <b>bo2-360-nx_extended: the Black Ops 1 Zombies maps, playable in the Black Ops II recompilation.</b><br>
+  The BO1 map, with BO2 gameplay. Built from your own game files.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Nintendo%20Switch-E60012?style=for-the-badge&logo=nintendoswitch&logoColor=white" alt="Nintendo Switch">
   <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge" alt="License: GPL-3.0"></a>
-  <a href="https://github.com/AlvaroEPena/bo2-360-nx/releases/latest"><img src="https://img.shields.io/github/v/release/AlvaroEPena/bo2-360-nx?style=for-the-badge&label=release" alt="Latest release"></a>
-  <a href="https://discord.gg/b8qchp7WjX"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-</p>
-
-<p align="center">
-  <a href="https://ko-fi.com/varo"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+  <img src="https://img.shields.io/badge/status-experimental-orange?style=for-the-badge" alt="Status: experimental">
 </p>
 
 ---
 
-> **bo2-360-nx_extended**: this fork adds to the recompilation project. So far:
-> * the Nuketown Zombies fix (installed DLC is reported as fully licensed, so Nuketown shows up offline), and
-> * an **optional, experimental Black Ops 1 maps add-on** ("the BO1 map, with BO2 gameplay"). Like the DLC, you
->   build it from your own game files with `tools/install_bo1_maps.py`, and it stays off unless installed.
->   Nacht der Untoten already appears on the Zombies globe with a working start location menu. The map itself is
->   being converted. See [docs/bo1_maps.md](docs/bo1_maps.md).
+## The goal
 
-bo2-360-nx is a static recompilation of Black Ops II (Xbox 360, Title Update 18). The game's PowerPC code is
-translated ahead of time into C++ and compiled for the Switch's ARM cores and for x86-64 PCs, so nothing is emulated
-while you play, and a Vulkan renderer of its own draws the game.
+Play the classic Black Ops 1 Zombies maps again with **local four-player split screen**, on the Switch and on
+Windows. This fork builds on [bo2-360-nx](https://github.com/AlvaroEPena/bo2-360-nx), a static recompilation of
+Black Ops II (Xbox 360) that already runs Zombies natively with split screen for up to four players. The fork adds an
+**optional, experimental add-on** that converts BO1's Zombies maps (from the Xbox 360 game files) into BO2 maps:
+**BO1's world, BO2's gameplay** (its weapons, perks, HUD, AI and split screen).
 
 > [!IMPORTANT]
-> **No game data is included, and none ever will be.** You need your own Xbox 360 copy of Black Ops II and its Title
-> Update 18. The release kit builds the game on your PC from your files; what it produces is yours alone and must not
-> be shared.
-
-The project was previously published as bo2-zm-nx, when it covered Zombies only.
+> **No game data is included, and none ever will be.** You need your own Xbox 360 copies of Black Ops II (with Title
+> Update 18) and Black Ops 1 (with its map packs for the DLC maps). Everything is converted on your PC from your
+> files; the result is yours alone and must not be shared. This repository holds only tools, code and notes.
 
 ## Contents
 
-[Features](#features) · [Installing](#installing) · [GSC Loader](#gsc-loader) · [How it works](#how-it-works) ·
-[Warnings](#warnings) · [Support](#support) · [Credits](#credits) · [License](#license) ·
-[Technical documentation](#technical-documentation)
+[Status](#status) · [The maps](#the-maps) · [How a map is converted](#how-a-map-is-converted) ·
+[Findings so far](#findings-so-far) · [Next steps](#next-steps) · [Building](#building) ·
+[The base game](#the-base-game) · [Credits](#credits) · [License](#license)
 
-## Features
+## Status
 
-### Game modes
+**Nacht der Untoten is playable, still rough.** It shows on the Zombies globe with its own start location, loads
+into BO1's map, and plays BO2 Zombies in it.
 
-| Mode | What you get |
-|---|---|
-| **Zombies** | Every map: TranZit with Bus Depot, Diner, Farm and Town, Nuketown Zombies, Die Rise, Mob of the Dead, Buried and Origins |
-| **Multiplayer** | Local matches with bots; weapon camos unlocked in Local, **Diamond** and the title update's camos included |
-| **Campaign** | All 19 story missions |
-| **DLC** | All Zombies and Multiplayer DLC maps, from your own DLC packs |
+| Part | State |
+| --- | --- |
+| Globe and menus | Nacht has a pin and a start location menu (stand-in pin and preview images for now) |
+| Collision and movement | Nacht's own, converted: walls, floors, stairs, clipping |
+| Zombie paths | Nacht's path nodes and links, converted; zombies spawn at Nacht's spawners and reach the players |
+| Doors, debris, zones | Nacht's door and two debris piles open and unlock their zones (start, box room, upstairs) |
+| Wall weapons | Nacht's 8 wall buys, mapped to BO2 weapons |
+| Mystery box | At Nacht's spot, facing the right way |
+| Geometry | Nacht's own world geometry |
+| Textures | Nacht's own textures, decoded from BO1's image packs; decals and blend layers drawn as overlays |
+| Lighting | Nacht's own baked light (lightmap); a neutral light grid stands in for the dynamic lighting |
+| Windows | Open: zombies climb through, but there are no boards to repair yet |
+| Props | Missing (BO1's static models are not converted yet), which leaves some see-through gaps |
+| Sounds and music | Still the base map's |
+| Install | The map zones are built with the tools by hand; the installer adds the map pack, not the map yet |
 
-Switch between modes from the home menu; **Extras > DEFAULT GAMEMODE** picks the one the game opens in.
+Recent fixes: sparkling surfaces (normal maps), a dark green tint (the base map's lights and light grid), walls
+vanishing by view angle (the base map's occluders), flickering overlays (decals drawn as walls), and two in-game
+crashes (a renderer read of a padding surface, and gibs with no dynamic-entity pool). The latest crash fix still
+needs a play test with the ray gun.
 
-### Playing together
+## The maps
 
-- **Split screen for up to four players** in Zombies and Multiplayer, each with an offline profile of their own. On the
-  Switch, any Joy-Con or controller can join: a new controller in the lobby brings up the system's controller screen.
-- **System Link (LAN)** between Switches and PCs.
-- **Internet play with an 8-character join code.** The host picks **HOST ONLINE GAME** and shares the code; the
-  others pick **JOIN WITH CODE**. The game opens the router's ports with UPnP, and when that does not work it punches
-  through both routers on its own, meeting through free public relay servers that only pass addresses along. As a
-  last resort the host can forward UDP ports 31000-31002 by hand.
-- **Cross-play** between the Switch and Windows, on the LAN and online.
-- **Zombies bots**: up to three in a Local or System Link lobby, sharing the four slots with human players. The bots
-  pack (`bo2zm_bots.gscpack`) is a separate download from the [Discord](https://discord.gg/b8qchp7WjX): put it next to the game's NRO
-  or executable.
+Every Zombies map of Black Ops 1 on the Xbox 360, in the order they are planned. Render world sizes (MB) are measured
+from the game files; the relocating rebuild means none is bound by the base map's size (Nuketown's is 30.0).
 
-### Mods and cheats
+| Map | BO1 zone | Comes from | Render world | State |
+| --- | --- | --- | --- | --- |
+| Nacht der Untoten | `zombie_cod5_prototype` | Rezurrection map pack | 17.5 | **playable, in progress** |
+| Verrückt | `zombie_cod5_asylum` | Rezurrection map pack | 24.6 | planned |
+| Shi No Numa | `zombie_cod5_sumpf` | Rezurrection map pack | 43.5 | planned |
+| Der Riese | `zombie_cod5_factory` | Rezurrection map pack | 37.7 | planned |
+| Kino der Toten | `zombie_theater` | the game disc | 44.1 | planned |
+| "Five" | `zombie_pentagon` | the game disc | 40.4 | planned |
+| Ascension | `zombie_cosmodrome` | First Strike map pack | 42.2 | planned |
+| Call of the Dead | `zombie_coast` | Escalation map pack | 39.1 | planned |
+| Shangri-La | `zombie_temple` | Annihilation map pack | 41.8 | planned |
+| Moon | `zombie_moon` | Rezurrection map pack | 39.9 | planned |
 
-- **Built-in cheats in Zombies** (Extras): god mode, infinite ammo, explosive bullets, no recoil, max points, game
-  speed, noclip and UFO, jump height, gravity, third person and field of view, zombies frozen or ignoring you, any
-  round up to 255, power-ups, perks, the map's weapons with Pack-a-Punch, doors and power. Each player has their own in
-  split screen, and players who join a System Link or online game keep theirs.
-- **GSC Loader**: compiled Xbox 360 script mods, mod menus included, in Zombies and Multiplayer. In a Local or System Link
-  game every player gets the host's menu, fitted to their own part of the screen.
-  Ready-to-use Zombies and Multiplayer mod menu packs are on the [Discord](https://discord.gg/b8qchp7WjX).
+Dead Ops Arcade is a different game mode (top-down), not a Zombies map, and is not planned.
 
-### Graphics and performance
+## How a map is converted
 
-- **Presets** from LOWEST to HIGH (the Xbox 360's own settings), plus CUSTOM with nine detail options. Hold Minus and
-  press Up or Down to change preset anywhere; Zombies maps can each keep a profile of their own.
-- **Recommended settings:** the **VERY LOW** preset. On big maps, set **FAR OBJECTS** to **SIMPLE** if you want
-  distant objects drawn; every preset hides them by default.
-- **FPS cap** of 30 or 60, **VSYNC**, and an FPS counter.
-- **Native code**: about 30,000 game functions compiled to ARM64 with link-time and profile-guided optimization, and
-  hot game code rewritten by hand.
-- **The game never changes the console's clocks.** With a safe overclock
-  ([safe speeds for your model](https://rentry.co/mariko#mariko-max-safe-on-battery-hac-001-01-heg-001)), a stable
-  60 FPS can be reached.
-- **Optional fourth CPU core**, about 12-16 % faster at the same clocks. It needs a forwarder with four cores enabled
-  (see [Installing](#installing) and [Warnings](#warnings)).
+Both games run on the same engine family and the same Xbox 360 hardware, so most of a map's data has a BO2
+counterpart that differs in layout rather than in kind. The converter reads BO1's data, rewrites it into BO2's
+layouts, and puts it into a BO2 map zone. In order:
 
-Every menu page and option: [docs/features.md](docs/features.md).
+1. **Read BO1's map zone.** The zone's loader is BO1's own code: a small PowerPC interpreter
+   (`tools/bo1_maps/zoneload.py`) runs the game's `Load_*` functions from your decrypted executable, so every structure
+   lands in memory exactly as the game builds it. The same interpreter loads BO2 zones to check the result.
+2. **Start from a BO2 map.** A BO2 Zombies map zone of your own (Nuketown, renamed) gives the container: assets,
+   script strings, sounds, effects and the map script that BO2's gameplay expects.
+3. **Convert each part of the world** and splice it in place of the base map's:
+   * collision (planes, brushes, triangles, the AABB tree, brush models, materials) and the entity string;
+   * zombie paths (nodes, links, visibility) and the game world;
+   * entities: spawners, zones, doors and debris, wall buys, the mystery box, windows, translated to BO2's prefabs;
+   * the render world: BSP, cells and portals, vertices (re-quantized per surface), indices, surfaces, brush models;
+   * the lightmap: BO1's baked light re-encoded in BO2's format;
+   * textures: BO1's image packs decoded and each texture placed in a new BO2 material.
+4. **Rebuild the zone with relocation.** BO1's data rarely has the size of what it replaces, so the rebuild records
+   every pointer in the base zone and moves each one past an edit, keeping alignment (`reloc_scan.py`,
+   `zone_rebuild.py`). Every other asset keeps its exact layout, which is checked asset by asset.
+5. **Edit the map script.** BO2's map script is decompiled from your zone with
+   [gsc-tool](https://github.com/xensik/gsc-tool), edited for the BO1 map (zones, doors, box location), compiled and
+   written back. Only the edits are stored here.
+6. **Install as a map pack.** The map goes into BO2's unused fifth DLC slot, so the globe lists it like DLC, and the
+   app accepts the pack's zones and merges its rows into the game's map tables.
 
-## Installing
+Every step is checked in the interpreter before the game ever runs it, and crashes in play are traced with the
+game's own symbols back to the recompiled function and the data it read.
 
-**You need:**
+Full notes, layouts and commands: **[docs/bo1_maps.md](docs/bo1_maps.md)**.
 
-- Your Xbox 360 copy of Black Ops II, as an ISO or extracted.
-- **Title Update 18. Required.**
-- Your DLC packs, if you have them (optional).
-- A Windows PC with **Python** to prepare your files.
-- For the Switch, a console that runs homebrew (custom firmware such as Atmosphère).
+## Findings so far
 
-Nothing in the releases comes from the game: you prepare your own game files and shaders on your PC, and they stay
-yours.
+The things that made the difference, in short (details and offsets in [docs/bo1_maps.md](docs/bo1_maps.md)):
 
-### Option 1: prebuilt Switch program (recommended)
+* **Layouts mostly carry over.** Collision, paths and render world structures exist in both games; many grew by a
+  field or changed order (path nodes 0x80 → 0x90 bytes, surfaces 80 → 96, cells 56 → 48, portals gain bounds, brush
+  models gain padding). Vertices are packed differently: BO2 quantizes positions per surface.
+* **The base map's size is not a limit.** With pointer relocation the converted world can be larger or smaller than
+  the base map's.
+* **BO1's textures stream from image packs** (`.pak`): a simple sector table, with each mip level stored raw or as
+  one LZO1X stream, in the same GPU tiling as zone pixels. They decode and copy straight into BO2 images.
+* **Lighting is per map data, not per material.** BO1's lightmap converts to BO2's three-tile format. The light grid,
+  local lights, reflection probes and occluders of the base map must not be kept: they tint, light and hide the new
+  map by the old map's coordinates.
+* **Material kinds matter.** BO1 marks decals and blend layers by their sort key; drawn as ordinary walls they
+  flicker against the wall below, and sky surfaces show their texture. BO2 decal and blend materials fix both.
+* **Runtime pools come from the map.** The collision map sizes the dynamic entity pool that zombie gibs use; an empty
+  one crashes on the first gib.
+* **Windows need BO2's barrier asset.** Zombies only tear boards through BO2's barrier entities and their animations,
+  which come from another map's zone: the next step is copying assets between zones.
 
-The quickest way. Each release has the Switch program ready-made (`bo2-360-nx-switch-PGO-NRO.zip`, optimized with
-link-time and profile-guided optimization) and the **game files and shader extractor**
-(`bo2-360-nx-gamefiles-shader-extractor.zip`), which prepares the rest from your files.
+## Next steps
 
-1. Download both zips from the [latest release](https://github.com/AlvaroEPena/bo2-360-nx/releases/latest).
-2. Unzip the extractor and drop your files (the game, Title Update 18 and any DLC) into its **Game Files** folder.
-3. Double-click **Extract game files and shaders.bat**. Choose **Both** (game files and shaders) and the modes you
-   want: **Zombies**, **Multiplayer**, **Campaign**. The game files take a few minutes, the shaders longer; if it
-   stops, run it again and it carries on where it stopped.
-4. Copy the `bo2zm` folder from the extractor's `output` folder to `sdmc:/switch/` on the SD card.
-5. Copy the `bo2zm` folder from the NRO zip to the same place, merging the two (it adds `bo2zm.nro`, `bo2cp.nro`
-   and their settings).
-6. Start it from the Homebrew Menu opened through a game (hold R while starting one) or from a forwarder, so it gets
-   the console's full memory.
+1. **Verify the crash fixes** in a longer play session (ray gun, explosives, several rounds).
+2. **Props and windows:** copy assets between zones (models, animations, the barrier asset) so Nacht gets its props
+   and repairable windows.
+3. **Clean-ups:** the base map's remaining static models and outdoor bounds; Nacht's own lights; sounds and music;
+   the pin and start location images.
+4. **Installer:** fold the whole conversion into `tools/install_bo1_maps.py`, so one command builds the maps from
+   your files.
+5. **Polish:** Nacht's own light grid, reflection probes, normal maps, mipmaps and sky.
+6. **The next maps,** starting with Verrückt, each with its own entity translation and map script edits.
 
-The finished folder on the SD card:
+## Building
 
-```text
-sdmc:/switch/bo2zm/
-├── bo2zm.nro                  Zombies and Multiplayer   (NRO zip)
-├── bo2zm.toml                 its settings              (NRO zip)
-├── bo2cp.nro                  Campaign                  (NRO zip)
-├── bo2cp.toml                 its settings              (NRO zip)
-├── bo2zm_shaders.spvpack      Zombies + Multiplayer shaders, and its index (extractor)
-├── bo2zm_shaders.spvidx
-├── bo2cp_shaders.spvpack      Campaign shaders, and its index (extractor)
-├── bo2cp_shaders.spvidx
-├── game/                      your disc files            (extractor)
-├── update/                    Title Update 18            (extractor)
-└── user/0000000000000000/     your DLC                   (extractor)
-```
-
-### Option 2: build everything from scratch
-
-The **build kit** builds the programs themselves on your PC as well, for the Switch, for Windows, or both. It is the
-way to get the Windows version, and it needs more tools: the kit's own readme lists them and covers every option.
-
-1. Unzip the kit and drop your files (the game, Title Update 18 and any DLC) into its **Game Files** folder.
-2. Run the kit. Pick **Switch**, **Windows** or both, and the modes to build: **Zombies**, **Multiplayer**,
-   **Campaign**.
-3. When it finishes, its output folder holds ready-to-copy folders:
-   - **Switch**: copy the `bo2zm` folder to `sdmc:/switch/` on the SD card and start it as in option 1.
-   - **Windows**: start the game with the shortcut in the output folder, or make a desktop shortcut to `bo2zm.exe`.
-
-### After installing
-
-The first start is quick: the shader library's index comes ready-made. Each map compiles its pipelines the first
-time it is played, and loads fast after that.
-
-**Four CPU cores (optional).** The easiest way is a forwarder made with [sphaira](https://github.com/NaGaa95/sphaira): highlight bo2zm in its
-homebrew list, choose **Install Forwarder** and set **CPU Cores: 4**. Start the game from the new HOME menu icon and
-pick **Extras > EXPERIMENTAL > CPU CORES: 4**. The game manages which core each of its threads runs on, so it runs
-well on four; as a failsafe, if the system needs the core back, it returns to three cores by itself and says so on
-screen.
-
-## GSC Loader
-
-The GSC Loader runs compiled **Xbox 360 (T6) server scripts**, the format console mod menus ship in, in Zombies and
-Multiplayer.
-
-1. Put each mod in its own folder inside `scripts/`, next to the game: `sdmc:/switch/bo2zm/scripts/<ModName>/` on the
-   Switch (beside `bo2zm.nro`), or `scripts\<ModName>\` beside `bo2zm.exe` on Windows.
-2. Add a `mod.ini` that says which mode it is for and how its scripts are named. For a mod whose scripts carry their
-   full game paths:
-
-   ```ini
-   mode=zombies
-   names=internal
+1. **Build the base game** with the upstream project's kit, from your own Black Ops II files: see
+   [Installing](https://github.com/AlvaroEPena/bo2-360-nx#installing) upstream. The app in this repository adds the
+   pieces the add-on needs (`app/src/bo2zm_dlc.cpp`, `app/src/ui/menus.lua`).
+2. **Install the map pack:**
    ```
+   python -I tools/install_bo1_maps.py --game <game folder> --content <user root>/0000000000000000/415608C3
+   ```
+   It writes the pack (map tables, names, the globe pin) and turns on `bo2zm_custom_maps` in `bo2zm.toml`.
+   `--remove` takes it out again.
+3. **Build the map zone** from your BO1 files with the tools in `tools/bo1_maps/` (by hand for now; the steps are in
+   [docs/bo1_maps.md](docs/bo1_maps.md#pipeline-nacht-by-hand-for-now)). Python 3 with NumPy is needed.
 
-3. In the game, open **Extras > SCRIPT LOADER**, select the mod, use **CHECK SCRIPTS** to see what each file replaces,
-   then **LOAD SELECTED + RESTART**.
+## The base game
 
-Zombies and Multiplayer keep separate selections, and **UNLOAD ALL + RESTART** returns to the stock scripts. Source
-code, PC or Plutonium bytecode and `.gscr` files have to be compiled for the Xbox 360 first. Folder layouts, every
-`mod.ini` key, startup scripts and limits: [docs/script-mods.md](docs/script-mods.md).
-
-## How it works
-
-The Xbox 360's executable is decrypted and patched to Title Update 18, then ReXGlue's code generator turns all of its
-PowerPC code into C++, which is compiled into a native Switch program (or a Windows one). A runtime built on the
-ReXGlue SDK stands in for the 360's kernel and system libraries: threads, memory, files, audio, controllers and
-networking. The game's own Direct3D layer still writes its commands for the Xbox 360's GPU; a native Vulkan renderer
-reads them and draws each frame on the Switch's GPU through Mesa's NVK driver. The game's shaders are translated to
-SPIR-V when you build, from your own disc. The details: [docs/technical.md](docs/technical.md).
-
-## Warnings
-
-- **Four CPU cores.** The fourth core belongs to the system, so in theory using it can make the console unstable. It
-  has been tested thoroughly and does not really crash, and the game hands the core back on its own when the system
-  needs it. It is your choice; I use four cores every time.
-- **Sleep.** Leaving the game in sleep mode for a long time might cause problems. Close it first if you will be away
-  for a while.
-
-## Support
-
-If you enjoy the port and want to support its development, you can buy me a coffee on
-[Ko-fi](https://ko-fi.com/varo). For help, the bots pack and mod menu packs, join the [Discord](https://discord.gg/b8qchp7WjX).
-
-<a href="https://ko-fi.com/varo"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+bo2-360-nx is a static recompilation of Black Ops II (Xbox 360, Title Update 18): the game's PowerPC code is
+translated ahead of time into C++ and compiled for the Switch and for x86-64 PCs, and a Vulkan renderer of its own
+draws the game. It brings every Zombies map, Multiplayer with bots, the Campaign, split screen for up to four
+players, System Link and online play, a GSC script loader and built-in cheats. Everything about it, from features to
+installing, is in the [upstream README](https://github.com/AlvaroEPena/bo2-360-nx#readme) and in this repository's
+[docs/features.md](docs/features.md), [docs/script-mods.md](docs/script-mods.md) and
+[docs/technical.md](docs/technical.md).
 
 ## Credits
 
-**Ported by AlvaroEPena.** The upstream projects and libraries this port is built on, with their licenses, are listed
-in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Thanks also to devkitPro and switchbrew, Atmosphère, sys-clk,
-[sphaira](https://github.com/NaGaa95/sphaira), and OpenAssetTools for its documentation of the fastfile format.
+* **bo2-360-nx** by AlvaroEPena: the recompilation this fork is built on
+  ([Discord](https://discord.gg/b8qchp7WjX), [Ko-fi](https://ko-fi.com/varo)).
+* [gsc-tool](https://github.com/xensik/gsc-tool) for decompiling and compiling map scripts, and OpenAssetTools for
+  its documentation of the fastfile format.
+* The upstream projects and libraries, with their licenses, are listed in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
 GPL-3.0 ([LICENSE](LICENSE)); bundled upstream code keeps its own notices, listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Call of Duty and Call of Duty: Black Ops II are trademarks of Activision Publishing, Inc. Nintendo Switch is a
-trademark of Nintendo. Xbox 360 is a trademark of Microsoft. This project is not affiliated with or endorsed by any of
-them, and it contains no game data.
-
-## Technical documentation
-
-How the port works, every optimization and what it gained, and building from source:
-**[docs/technical.md](docs/technical.md)**.
+Call of Duty, Call of Duty: Black Ops and Call of Duty: Black Ops II are trademarks of Activision Publishing, Inc.
+Nintendo Switch is a trademark of Nintendo. Xbox 360 is a trademark of Microsoft. This project is not affiliated with
+or endorsed by any of them, and it contains no game data.
