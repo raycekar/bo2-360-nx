@@ -165,10 +165,29 @@ Known gaps: no window barricades (zombies walk in through open windows; BO2's `_
 code path, untested), no perks (as in the original Nacht), BO1 pathnode targetnames `autoNN` are not in the zone's
 string list (set to none), only one player respawn location (the start room).
 
+### Windows (barricades): what they need
+
+* BO2 zombies tear boards only through a `zbarrier` entity (`tear_into_building` reads chunk health, attack slots and
+  animation states from it); BO1-style board brush models are not enough.
+* BO1 and BO2 windows share the prefab layout: the `exterior_goal` struct; 3 units in, the barrier and the mantle's
+  begin node (which must carry the barrier's targetname); +44 the repair trigger struct (radius 36, height 64); +80 the
+  end node. `nacht_ents.py --windows` writes all 12 of Nacht's windows this way (TranZit's
+  `zbarrier_zmcore_BasicWoodBarrier` keys), and `splice_world.py` names the begin nodes (`_node_targetnames`).
+* A `zbarrier_<type>` entity needs the **zbarrier asset** (type 61) of that name: the game stops with "Could not load
+  default asset ... zbarrier zmcore_BasicWoodBarrier". Nuketown's zone has only `zmcore_MagicBox`. The window asset
+  (`zmcore_basicwoodbarrier`, ~580 bytes: a 560-byte header in the temp block, the name in block 5) and the board
+  animations `o_zombie_board_<n>_pull` / `_repair` are in TranZit's zone (`zm_transit.ff`); the board models
+  (`p6_anim_zm_barricade_board_0<n>`, `_upgrade`, `_collision`) and the zombies' tear/enter animations are already in
+  Nuketown's.
+* So windows wait for copying assets between zones. The map zone's asset list is in block 5 with the asset data, so
+  adding entries there would move every pointer; the copies need a zone of their own that loads with the map, and the
+  references inside them (block offsets into TranZit's zone, script strings) rewritten.
+
 ## Next
 
+* **Copy assets between zones** (a zone of our own loaded with the map; references rewritten): first the window
+  asset and its 12 board animations (then `--windows`), later Nacht's own models, materials and images.
 * **Render world (gfx_map)**, then Nacht's own lights (com_map), models and textures, so it looks like Nacht.
-* Window barricades (try BO2's BO1-style board chunks with Nacht's board brush models).
 * Fold the steps above into `install_bo1_maps.py`.
 
 1. Convert Nacht's map zone. BO1 360 zones decode (Salsa20 with the flag-0 key from the BO1 executable, one shared

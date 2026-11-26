@@ -1,6 +1,6 @@
 """Translate Nacht der Untoten's BO1 entity string into the entities BO2's Zombies scripts read.
 
-usage: python -I nacht_ents.py <nacht ents.txt> <nuketown ents.txt> <out ents.txt> <out aliases.json>
+usage: python -I nacht_ents.py <nacht ents.txt> <nuketown ents.txt> <out ents.txt> <out aliases.json> [--windows]
 
 Both inputs are the plain entity strings of the decoded zones (BO1 zombie_cod5_prototype, BO2 zm_nuked); nothing from
 either game is stored here. The aliases file maps BO1 script strings to strings that already exist in the BO2 zone
@@ -31,6 +31,18 @@ WALLBUYS = {
     "stielhandgranate": ("sticky_grenade_zm", "semtex_bag"),
 }
 ANIMSCRIPTS = {"zombie_mantle_over_40": "zm_mantle_over_40"}
+# BO2's six-board window (as TranZit's windows): board models from Nuketown's zone, board animations by name
+WINDOW = {"classname": "zbarrier_zmcore_BasicWoodBarrier", "type": "zmcore_BasicWoodBarrier", "zbarriernumboards": "6",
+          "showupgradedmodel": "0", "showalternatemodel": "0", "barrieranimtime": "0"}
+for _n in range(1, 7):
+    WINDOW[f"zbarrierboardmodel{_n}"] = f"p6_anim_zm_barricade_board_0{_n}"
+    WINDOW[f"zbarrierupgradedboardmodel{_n}"] = f"p6_anim_zm_barricade_board_0{_n}_upgrade"
+    WINDOW[f"zbarriertearanim{_n}"] = f"o_zombie_board_{_n}_pull"
+    WINDOW[f"zbarrierboardanim{_n}"] = f"o_zombie_board_{_n}_repair"
+
+
+def near(a, b, tol=16.0):
+    return sum((float(x) - float(y)) ** 2 for x, y in zip(a.split(), b.split())) <= tol * tol
 
 
 def parse(txt):
@@ -70,6 +82,31 @@ def main():
     for e in nacht:  # window boards: what the exterior_goal structs target
         if e.get("targetname") == "exterior_goal" and "target" in e:
             boards.add(e["target"])
+
+    # windows: BO1 and BO2 use the same prefab layout (goal struct; 3 units in, the barrier and the mantle's begin node;
+    # +44 the repair trigger struct; +80 the end node). Each BO2 window is named after an unused Nuketown traversal
+    # name, which is in the zone's script string list, since the begin node must carry the window's name.
+    # Off by default: the window type needs the zbarrier asset zmcore_basicwoodbarrier and the board animations, which
+    # are in TranZit's zone, not Nuketown's (without them the map stops with "Could not load default asset ...").
+    begin_names, node_names = {}, {}
+    goals = [e for e in nacht if e.get("targetname") == "exterior_goal"] if "--windows" in sys.argv else []
+    begins = [e for e in nacht if e["classname"] == "node_negotiation_begin"]
+    for i, goal in enumerate(goals):
+        name = nuked_neg[len(nacht_neg) + i]
+        begin = next((b for b in begins if near(b["origin"], goal["origin"])), None)
+        trig = next((s for s in by_target.get(goal["target"], []) if "radius" in s), None)
+        if begin is None or trig is None:
+            print("window without a begin node or trigger struct at", goal["origin"])
+            continue
+        begin_names[begin["origin"]] = name
+        node_names[begin["origin"]] = name
+        out.append({"classname": "script_struct", "targetname": "exterior_goal", "target": name,
+                    "script_string": name, "origin": goal["origin"], "angles": goal["angles"]})
+        out.append(dict(WINDOW, targetname=name, script_string=name, origin=begin["origin"], angles=goal["angles"]))
+        out.append({"classname": "script_struct", "targetname": name, "script_string": name,
+                    "origin": trig["origin"], "angles": goal["angles"], "radius": trig["radius"],
+                    "height": trig.get("height", "64")})
+    aliases["_node_targetnames"] = node_names
     for e in nacht:  # wall weapon chalk: what the weapon models on the wall target (BO1 materials, no BO2 model)
         if e["classname"] == "trigger_use" and e.get("targetname") == "weapon_upgrade":
             for shown in by_target.get(e.get("target", ""), []):
@@ -85,6 +122,8 @@ def main():
             for k in ("targetname", "target", "animscript"):
                 if n.get(k) in aliases:
                     n[k] = aliases[n[k]]
+            if n["origin"] in begin_names:
+                n["targetname"] = begin_names[n["origin"]]
             out.append(n)
         elif c == "script_brushmodel":
             if t in boards or t.endswith("_chalk") or t == "mature_blood":
@@ -101,9 +140,13 @@ def main():
         elif c == "script_struct" and (t == "intermission" or re.fullmatch(r"auto(5[89]|6[0-5])", t)):
             out.append(e)
         elif c.startswith("actor_zombie"):
-            out.append({"classname": "script_struct", "targetname": SPAWNER_ZONE[t], "origin": e["origin"],
-                        "angles": e.get("angles", "0 0 0"), "script_noteworthy": "spawn_location",
-                        "script_string": "find_flesh"})
+            # with windows, no script_string: the zombie heads for the nearest windows and tears in; without them,
+            # find_flesh sends it straight at the players
+            spot = {"classname": "script_struct", "targetname": SPAWNER_ZONE[t], "origin": e["origin"],
+                    "angles": e.get("angles", "0 0 0"), "script_noteworthy": "spawn_location"}
+            if not goals:
+                spot["script_string"] = "find_flesh"
+            out.append(spot)
         elif c == "trigger_use" and t == "weapon_upgrade":
             weapon, model = WALLBUYS[e["zombie_weapon_upgrade"]]
             shown = by_target.get(e.get("target", ""), [e])[0]  # the BO1 weapon model on the wall

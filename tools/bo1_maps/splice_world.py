@@ -28,7 +28,20 @@ class FixedStrings:
 
     def __init__(self, t5, t6, aliases=None):
         self.t5, self.lookup, self.missing = t5, {s: i for i, s in enumerate(t6)}, set()
-        self.aliases = aliases or {}
+        self.aliases = dict(aliases or {})
+        self.node_names = [(tuple(float(v) for v in o.split()), n)
+                           for o, n in self.aliases.pop("_node_targetnames", {}).items()]
+        self.named = 0
+
+    def node_name(self, origin):
+        """String index for a node that gets a targetname by position, or None."""
+        for o, n in self.node_names:
+            if sum((a - b) ** 2 for a, b in zip(o, origin)) < 0.25:
+                if n not in self.lookup:
+                    raise SystemExit(f"node name {n} is not in the BO2 zone's script strings")
+                self.named += 1
+                return self.lookup[n]
+        return None
 
     def index(self, i):
         if not i:
@@ -42,6 +55,7 @@ class FixedStrings:
 def gameworld(start, end, m, h, name, strings, target_nodes, smooth_pad, extra_leaf=False):
     s = T.Stream()
     s.pos = start
+    strings.named = 0  # fit() builds this several times; the count is for the last build
     p = h + 4
     n_nodes, nodes = m.u32(p), m.u32(p + 4)
     vis_bytes, vis = m.u32(p + 0x18), m.u32(p + 0x1C)
@@ -61,8 +75,11 @@ def gameworld(start, end, m, h, name, strings, target_nodes, smooth_pad, extra_l
         ty = struct.unpack_from(">I", t5, 0)[0]
         t6[0:4] = T.u32(T.NODE_TYPES.get(ty, ty))
         t6[4:8] = T.u32(struct.unpack_from(">H", t5, 4)[0] | 0x300000)
-        for k in range(5):
+        for k in range(5):  # targetname, target, animscript, script_linkname, script_noteworthy
             t6[8 + 2 * k:10 + 2 * k] = struct.pack(">H", strings.index(struct.unpack_from(">H", t5, 6 + 2 * k)[0]))
+        named = strings.node_name(struct.unpack_from(">3f", t5, 0x14))
+        if named is not None:  # a window's begin node carries the window's name (nacht_ents.py)
+            t6[8:10] = struct.pack(">H", named)
         t6[0x14:0x3C] = t5[0x10:0x38]
         count = struct.unpack_from(">H", t5, 0x3E)[0]
         t6[0x3C:0x3E] = struct.pack(">H", count)
@@ -155,6 +172,8 @@ def main():
             gb0["5"], gb1["5"], "game_map_mp")
     ci, cf0, cb0, cf1, cb1 = info[COL]
     c = fit(lambda pad, extra: clipmap(cb0["5"], m, h, name, pad, ents_text), cb0["5"], cb1["5"], "col_map_mp")
+    if strings.node_names:  # fit() builds the game world several times: count one build's worth
+        print(f"named nodes: {strings.named} of {len(strings.node_names)} expected")
     if strings.missing:
         print("script strings not in the BO2 zone (set to none):", sorted(strings.missing)[:20])
     d = open(bo2_zone, "rb").read()
