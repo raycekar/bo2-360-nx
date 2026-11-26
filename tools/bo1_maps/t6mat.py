@@ -76,26 +76,56 @@ def template(data, rec_pos):
     return hdr, textures, consts, bits
 
 
+def streamed(m, img, packs):
+    """(header, pixels) of a streamed BO1 image's largest mip from its image pack, as a one-level image; or None.
+    From 0x54 the header lists up to 4 mip parts of 12 bytes: u32 (offset << 4 | level), u16 width, u16 height,
+    u32 part id (top byte: pack type, see pak2.py)."""
+    hdr = bytearray(m.read(img, 0x9C))
+    best = None
+    for k in range(4):
+        _, w, h, pid = struct.unpack_from(">IHHI", hdr, 0x54 + 12 * k)
+        if pid and (best is None or w * h > best[0] * best[1]):
+            best = (w, h, pid)
+    if best is None or (best[2] >> 24) not in packs:
+        return None
+    w, h, pid = best
+    px = packs[pid >> 24].pixels(pid & 0xFFFFFF)
+    if px is None:
+        return None
+    # fetch constant (0x1C, six little-endian words): one level, no mip address, no packed mips
+    dw4 = struct.unpack_from("<I", hdr, 0x2C)[0] & ~(0xF << 6)
+    struct.pack_into("<I", hdr, 0x2C, dw4)
+    struct.pack_into("<I", hdr, 0x30, struct.unpack_from("<I", hdr, 0x30)[0] & 0x600)
+    struct.pack_into(">IHHHBBI", hdr, 0x38, len(px), w, h, 1, 1, 0, len(px) >> 8)
+    return bytes(hdr), px
+
+
 def image_header(bo1_hdr, image_template):
     """BO2 image header (0xD4) for a BO1 one (0x9C): the D3D texture and size fields carry over."""
     h = bytearray(image_template)
     h[0:0x50] = bo1_hdr[0:0x50]
+    h[0x48:0x4C] = b"\xff\xff\xff\xff"  # pixels: inline (in block 3), as in BO2's own images
     h[0x50:0xCC] = bytes(0xCC - 0x50)
     h[0xCC:0xD0] = b"\xff\xff\xff\xff"
     h[0xD0:0xD4] = bo1_hdr[0x98:0x9C]
     return bytes(h)
 
 
-def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template, name_of, bo1_file=b""):
+def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template, name_of, bo1_file=b"", packs=None):
     """Returns {pieces, pixels (padded to 4096), surf_map (surface -> new material index), count, pad(k)}.
-    surfs_mats: BO1 material address per surface."""
+    surfs_mats: BO1 material address per surface; packs: {pack type: pak2.Pak} for streamed images."""
     hdr, textures, consts, bits = template(data, template_pos)
     unique, index_of = [], {}
     surf_map = []
+    stream = {}
     for mat in surfs_mats:
         img = color_image(m, mat) if mat else None
-        if img is not None and image_key(m, img) not in images:
-            img = None
+        # streamed: no pixels in the zone (a streamed header's size at 0x38 is 0; its key can match an inline image's)
+        if img is not None and (image_key(m, img) not in images or m.u32(img + 0x38) == 0):
+            if img not in stream:
+                stream[img] = streamed(m, img, packs or {})
+            if stream[img] is None:
+                img = None
         if img not in index_of:
             index_of[img] = len(unique)
             unique.append(img)
@@ -116,10 +146,14 @@ def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template,
         pieces.append(("b5", f"nacht/{name_of(img) if img else 'none'}_{k}".encode() + b"\0", 0))
         pieces.append(("b5", bytes(tex), 3))
         if inline:
-            (kind, off), size = images[image_key(m, img)]
-            pieces.append(("temp", image_header(m.read(img, 0x9C), image_template)))
+            if img in stream:
+                bo1_hdr, px = stream[img]
+            else:
+                (kind, off), size = images[image_key(m, img)]
+                bo1_hdr = m.read(img, 0x9C)
+                px = bo1_block2[off:off + size] if kind == "b2" else bo1_file[off:off + size]
+            pieces.append(("temp", image_header(bo1_hdr, image_template)))
             pieces.append(("b5", f"nacht_{name_of(img)}_{k}".encode() + b"\0", 0))
-            px = bo1_block2[off:off + size] if kind == "b2" else bo1_file[off:off + size]
             pixels.append(px + bytes((-len(px)) % 4096))
         if consts:
             pieces.append(("b5", consts, 15))

@@ -10,6 +10,7 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "install"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 class Pak:
@@ -27,8 +28,8 @@ class Pak:
         assert head[:4] == b"pak2", head[:4]
         _, self.field, self.count, self.sector, self.data_start = struct.unpack_from(">5I", head, 4)
         n = self.count
-        self.pos = struct.unpack(f">{n}I", self.read(0x18, 4 * n))
-        raw = struct.unpack(f">{n}H", self.read(0x18 + 4 * n + 2, 2 * n))
+        self.pos = struct.unpack(f">{n}I", self.read(0x1C, 4 * n))
+        raw = struct.unpack(f">{n}H", self.read(0x1C + 4 * n, 2 * n))
         self.sizes = [s & 0x7FFF for s in raw]
         self.flags = [s >> 15 for s in raw]
 
@@ -36,29 +37,22 @@ class Pak:
         self.f.seek(self.base + off)
         return self.f.read(n)
 
-    def pixels(self, index, size):
-        """A part's pixels: the part starts with a u32 offset (rounded up to 16) to one LZX stream (XMem style, no
-        frame headers) holding one mip level of `size` bytes (tiled, 8-in-16, as in a zone)."""
+    def pixels(self, index):
+        """A part's pixels (one mip level, tiled, 8-in-16, as in a zone), or None. Part: u32 W, zeros to W; at W:
+        u32 0, u32 compressed size, u32 uncompressed size, then one LZO1X stream."""
         got = self.part(index)
         if got is None:
             return None
-        data, _ = got
-        start = (struct.unpack(">I", data[:4])[0] + 15) & ~15
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "inspect"))
-        import ff_shaders
-        out = bytearray()
-        lzx = ff_shaders.Lzx()
-        # frames of at most 0x8000 output share one LZX state
-        src = data[start:]
-        try:
-            out += lzx.decompress(src, size) if size <= 0x8000 else self._big(lzx, src, size)
-        except Exception:  # noqa: BLE001
-            return None
-        return bytes(out)
-
-    @staticmethod
-    def _big(lzx, src, size):
-        return lzx.decompress(src, size)
+        data, compressed = got
+        if not compressed:
+            return data
+        w = struct.unpack(">I", data[:4])[0] & 0x7FFFFFFF  # the top bit: a flag, meaning not known
+        _, comp, unc = struct.unpack_from(">3I", data, w)
+        import lzo1x
+        out = lzo1x.decompress(data[w + 12:w + 12 + comp], unc)
+        if len(out) != unc:
+            raise lzo1x.LzoError(f"part {index:#x}: {len(out):#x} bytes, expected {unc:#x}")
+        return out
 
     def part(self, index):
         """(raw bytes, flag) of entry index, or None."""

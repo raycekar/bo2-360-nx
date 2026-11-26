@@ -215,8 +215,14 @@ def main():
                 raw = m2.read(m2.u32(img + 0x94), 64).split(b"\0")[0].decode("latin-1")
                 return re.sub(r"[^A-Za-z0-9_]", "_", raw) or "img"
 
+            # --paks "0=<disc iso>::images.pak;3=img_dlc1.pak": BO1 image packs by type (pak2.py)
+            import pak2
+            packs = {}
+            for spec in filter(None, opt.get("--paks", "").split(";")):
+                kind, path = spec.split("=", 1)
+                packs[int(kind)] = pak2.Pak(*path.split("::"))
             mats = t6mat.build(m2, surf_mats, images, block2, base, TEMPLATE_MATERIAL,
-                               base[NUKED_LM_HEADER:NUKED_LM_HEADER + 0xD4], name_of, bo1)
+                               base[NUKED_LM_HEADER:NUKED_LM_HEADER + 0xD4], name_of, bo1, packs)
             print(f"materials: {mats['count']} new (one per Nacht color texture), "
                   f"{sum(len(p) for p in mats['pixels']) // 1024} KB of pixels")
         gfx_edits, gfx_patches, mg = t6gfx.convert(m, gfx_h, base, mat, mats)

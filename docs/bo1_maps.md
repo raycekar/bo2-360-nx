@@ -8,7 +8,7 @@ it. Nothing from either game is stored in this repository.
 
 | Map | Globe | Playable | Looks like |
 | --- | --- | --- | --- |
-| Nacht der Untoten (`zm_nacht`) | pin and start menu (TranZit's pin and Nuketown's map images for now) | yes: Nacht's collision, paths, entities and an edited map script; round 1, zombies come in through open windows | Nacht's geometry with Nacht's lightmap light, one stand-in Nuketown material; no props, no own textures yet |
+| Nacht der Untoten (`zm_nacht`) | pin and start menu (TranZit's pin and Nuketown's map images for now) | yes: Nacht's collision, paths, entities and an edited map script; round 1, zombies come in through open windows | Nacht's geometry with Nacht's lightmap light, one stand-in Nuketown material; no props. Nacht's own textures: built, not yet tested in game |
 
 Known: opening the globe in the first seconds after start can miss pins (it builds its list once while the packs
 still mount); backing out and reopening fixes it.
@@ -50,7 +50,7 @@ python -I nacht_ents.py ents_nacht.txt ents_nuked.txt ents_nacht_bo2.txt aliases
 python -I reloc_scan.py zm_nacht_from_nuked.zone relocs.bin default_mp.image.bin           # once per base zone
 python -I splice_world.py zm_nacht_from_nuked.zone <footprint>.json zombie_cod5_prototype.zone default.image.bin \
     zm_nacht.zone --ents ents_nacht_bo2.txt --aliases aliases.json --bo2-image default_mp.image.bin \
-    --relocs relocs.bin --gfx [--materials]                                                 # world + lightmap
+    --relocs relocs.bin [--paks "0=<BO1 disc iso>::images.pak;3=img_dlc1.pak"] --gfx [--materials]   # world, lightmap, textures
 python -I zm_nacht/script_edits.py decompiled/t6 nacht_src                                  # map script
 gsc-tool -m comp -g t6 -s xb2 -w decompiled/t6 nacht_src
 python -I inject_gsc.py zm_nacht_patch.zone zm_nacht_patch_new.zone compiled/t6 maps/mp/zm_nacht.gsc maps/mp/zm_nacht_standard.gsc
@@ -60,10 +60,11 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
 
 ## Remaining plan
 
-1. **Textures (in progress).** Decode BO1's image packs (pak2, below: the compression is the open question), then
-   `t6mat.py` gives each Nacht color texture its own material (done and loading; it needs the pixels). Then judge the
-   lightmap's colors and brightness with real textures (the R/B swap in `t6lightmap.build` is unverified), and the
-   light grid, reflection probes and sky.
+1. **Textures (in progress).** Done: BO1's image packs decode (LZO1X, below) and `splice_world.py --materials
+   --paks ...` gives each of Nacht's 72 color textures its own material with its pixels (largest mip only).
+   Not yet seen in game. Next: check it in game; then judge the lightmap's colors and brightness with real
+   textures (the R/B swap in `t6lightmap.build` is unverified); then normal maps, mips, light grid, reflection
+   probes and sky.
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
    `zmcore_basicwoodbarrier` and its 12 board animations (then `nacht_ents.py --windows`).
@@ -179,26 +180,26 @@ visibility data / static model instances copied); with `--materials` also the ma
   Nuketown keeps pixels in the zone for only 4 of its 465 world materials (the rest stream from `.ipak`).
 * New materials clone `wqc/wood_burned` (normal map reference kept, color map inline) and go after Nuketown's last
   material, before the world's outdoor image (file 0x3DC6299, block 5 0x3854A18; new pixels at block 3 0xBFF000).
-  The zone builds and loads in the interpreter (asset 3120's footprint still differs: not checked).
+  The zone builds and loads in the interpreter; every other asset keeps its footprint (asset 3120 differs only
+  by 4 bytes of temp block, harmless).
 
-### BO1 image packs (`pak2.py`)
+### BO1 image packs (`pak2.py`, `lzo1x.py`)
 
-* Most BO1 textures are streamed: Nacht's zone holds pixels for only 55 images. Packs: the disc's `images.pak`
-  (2.2 GB, 45,833 entries; read in place from the ISO), `images_low.pak`, and per DLC `img_dlcN.pak` (Rezurrection:
-  `img_dlc1.pak` 4,954 entries, `img_dlc5.pak` 1,542; `tools/inspect/stfs_extract.py <package> --only <name>`).
-* File (big endian): `pak2`, timestamp, u32 ?, count, sector size 0x800, data start; at 0x18 count × u32 start sectors
-  (absolute; -1 absent), 2 bytes, count × u16 sizes in sectors (low 15 bits; top bit a flag). BO1 looks a part up as
-  `table[id & 0xFFFFFF]` (sub_8231D030 / sub_8231D0A0; pack objects at 0x83277E88, opened by sub_8231E858).
-* Part: u32 W, zeros to W; at W: u32 0, u32 compressed size, u32 uncompressed size, compressed data to the part's
-  end. **Compression not identified yet**: not zlib/deflate at any offset (0 bytes out), not BO2's XMem LZX
-  framing, not plain LZX (an LZX parse from W+5 copies DXT-looking bytes but renders as noise). Where the data goes:
-  read completion callback 0x82588BE0 (cache flush) → sub_825A5678 → sub_825BDEB0 queues {buffer, size, …} in a
-  2048-entry queue at 0x84033B60; its consumer sub_825BE020 pops entries and calls only D3D-area code (0x8249xxxx,
-  0x824AEA50/0x824AF008) with GPU-packet-like constants (0x4B021A01, 0x4B00xxxx): **likely a GPU-side decode**.
-  The fastfile worker (`DB_DecompressIOStreamWorker`, thread entry 0x821D9A88) uses zlib 1.2.3 raw inflate
-  (inflateInit2_ 0x823AFF58 with -15, inflate 0x823B01E0) — not used for image parts. Next: trace sub_825BE020's
-  D3D calls (which shader / resolve it sets up) or look for the decode shader in BO1's code zones.
-* Streamed BO1 image header: size 0 and 1×1 at 0x38/0x3C (placeholders); from 0x50 a u32, then per mip part 12 B:
-  u32 (cumulative uncompressed offset << 4 | level), u16 w, u16 h, u32 part id (top byte = pack type: Nacht's terrain
-  = 3, found in images.pak; plaster = 0, not found yet in images / images_low / img_dlc1 / img_dlc5). Each part is one
-  mip level.
+* Most BO1 textures are streamed: of Nacht's 72 world color textures only a few have pixels in the zone. Packs: the
+  disc's `images.pak` (2.2 GB, 45,833 entries; read in place from the ISO), `images_low.pak`, and per DLC
+  `img_dlcN.pak` (Rezurrection: `img_dlc1.pak` 4,954 entries, `img_dlc5.pak` 1,542;
+  `tools/inspect/stfs_extract.py <package> --only <name>`).
+* Which pack: a part id's top byte is the pack type. Type 0 = `images`, 1 = `images_low` (opened at 0x82589400),
+  2 = the patch pack; other types come from the map's `_load` zone, whose type 0x27 assets name a pack and its type:
+  `zombie_cod5_prototype_load` -> `img_dlc1` type 3 (and `snd_dlc1`). Open: sub_8231E858; lookup: sub_8231D030.
+* File (big endian): `pak2`, timestamp, u32 ?, count, sector size 0x800, data start, u32 ?; at 0x1C count x u32
+  start sectors (absolute; -1 absent), then count x u16 sizes in sectors (low 15 bits; top bit 1 = compressed).
+* Part: stored (flag 0) = the pixels as they are; compressed: u32 W (top bit a flag), zeros to W; at W: u32 0,
+  compressed size, uncompressed size, then one **LZO1X** stream. Each part is one mip level, tiled and 8-in-16 like
+  zone pixels. (The GPU job queued after a read, sub_825BE020, is only a memexport copy.)
+* Streamed image header: size 0 and 1x1 at 0x38/0x3C (placeholders); at 0x54 up to 4 parts of 12 B: u32
+  (cumulative offset << 4 | level), u16 w, u16 h, u32 part id. The fetch constant at 0x1C already has the full size;
+  dword4 bits 6-9 = max mip level; dword5 = dimension, packed mips, mip address.
+* `t6mat.streamed` takes the largest part as a one-level inline image: max mip 0, no mip address, size/w/h/levels
+  at 0x38, pixel pointer -1. A streamed header's key can match an inline image's, so size 0 at 0x38 means streamed
+  (an image with no pixels makes the loader align block 5 to 4096, which breaks the relocation).
