@@ -97,6 +97,18 @@ Lessons learned on the way:
   after the node array.
 * Still missing: static models (they need the XModels), mapEnts (the entity string), dynamic entities.
 
+### World data converted: com_map, game_map_mp, col_map_mp (+ map_ents)
+
+`t6clip.py` now writes a zone with three world assets, which loads completely through BO2's loader:
+* **com_map**: 20 primary lights. BO1 ComPrimaryLight is 0xDC bytes, BO2's 0xC4 (see `write_comworld`).
+* **game_map_mp**: 670 path nodes, 56,029 bytes of path visibility, a 399-node tree (598 child/leaf checks match
+  BO1). BO2 streams **nodeCount + 128** nodes (spare runtime slots). pathnode_t is 0x80 → 0x90 and pathlink_s
+  12 → 16 bytes. Node types 8/9/10 are renumbered (BO2 has no wide cover). Script strings (targetname, ...) are
+  renumbered into the zone's own string list (BO2 `Load_ScriptStringList` 0x822AEFE8; remap per field 0x822CC438).
+  Base nodes live in block 1 (runtime): no file data. Guessed defaults (BO1 does not store them; most common in
+  Nuketown): node spawnflags |= 0x300000, link flags 0x28.
+* **col_map_mp** with **map_ents** inline.
+
 ## Next
 
 1. Convert Nacht's map zone. BO1 360 zones decode (Salsa20 with the flag-0 key from the BO1 executable, one shared

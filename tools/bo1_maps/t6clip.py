@@ -287,10 +287,113 @@ def write_comworld(s, m, h, name):
             s.put(nm + b"\0")
 
 
-def write_zone(assets):
-    """assets: [(type, writer(stream))]. Returns the zone (XFile header + body), as zoneload.py --game t6 reads it."""
+NODE_TYPES = {8: 6, 9: 7, 10: 8}  # BO1 cover wide right/left, pillar -> BO2 cover right/left, pillar
+
+
+def write_gameworld(s, m, h, name, strings):
+    """BO1 GameWorldSp (0x2C: name, PathData) as BO2's GameWorldMp (0x2C; Load_GameWorldMp 0x822BC138, PathData
+    0x822BBF20). PathData: BO1 {nodeCount, nodes, basenodes, chainNodeCount, chainNodeForNode, nodeForChainNode,
+    visBytes, pathVis, nodeTreeCount, nodeTree} -> BO2 {nodeCount, originalNodeCount, nodes, basenodes, visBytes,
+    pathVis, smoothBytes, smoothCache, nodeTreeCount, nodeTree}. pathnode_t 0x80 -> 0x90 (nodes 0x822B37D0 /
+    0x822B3660): the constant part is re-laid out, spawnflags become an int, script strings are renumbered into this
+    zone's list (strings: a ScriptStrings), the runtime parts stay zero. pathlink_s 12 -> 16 bytes (adds flags).
+    Base nodes live in block 1 (runtime): nothing in the file. The node tree keeps child offsets; leaves inline.
+    Not stored by BO1, set to the most common Nuketown values: node spawnflags |= 0x300000, link flags 0x28."""
+    p = h + 4
+    n_nodes, nodes = m.u32(p), m.u32(p + 4)
+    vis_bytes, vis = m.u32(p + 0x18), m.u32(p + 0x1C)
+    tree_n, tree = m.u32(p + 0x20), m.u32(p + 0x24)
+    s.put(struct.pack(">i", -1) + struct.pack(">IIiiIiIiIi", n_nodes, n_nodes, -1 if n_nodes else 0,
+                                                -1 if n_nodes else 0, vis_bytes, -1 if vis_bytes else 0, 0, 0,
+                                                tree_n, -1 if tree_n else 0), block_data=False)
+    s.align(0)
+    s.put(name.encode() + b"\0")
+    links = []
+    if n_nodes:
+        s.align(3)
+        out = bytearray()
+        for i in range(n_nodes):
+            t5 = m.read(nodes + 0x80 * i, 0x80)
+            t6 = bytearray(0x90)
+            t6[0:4] = u32(NODE_TYPES.get(struct.unpack_from(">I", t5, 0)[0], struct.unpack_from(">I", t5, 0)[0]))
+            t6[4:8] = u32(struct.unpack_from(">H", t5, 4)[0] | 0x300000)
+            for k in range(5):  # targetname, script_linkName, script_noteworthy, target, animscript
+                t6[8 + 2 * k:10 + 2 * k] = struct.pack(">H", strings.index(struct.unpack_from(">H", t5, 6 + 2 * k)[0]))
+            t6[0x14:0x38] = t5[0x10:0x34]  # animscriptfunc, origin, angle, forward, radius, minUseDistSq
+            t6[0x38:0x3C] = t5[0x34:0x38]  # wOverlapNode
+            count = struct.unpack_from(">H", t5, 0x3E)[0]
+            t6[0x3C:0x3E] = struct.pack(">H", count)
+            lp = struct.unpack_from(">I", t5, 0x40)[0]
+            t6[0x40:0x44] = u32(-1 if (count and lp) else 0)
+            links.append(m.read(lp, 12 * count) if (count and lp) else b"")
+            out += t6
+        out += bytes(0x90 * 128)  # BO2 streams nodeCount + 128 nodes: spare slots for nodes added at run time
+        s.put(bytes(out))
+        for data in links:
+            if data:
+                s.align(3)
+                s.put(b"".join(data[12 * k:12 * k + 8] + bytes([0x28]) + data[12 * k + 8:12 * k + 12] + bytes(3)
+                               for k in range(len(data) // 12)))
+    if vis_bytes:
+        s.align(0)
+        s.put(m.read(vis, vis_bytes))
+    if tree_n:
+        s.align(3)
+        t5_tree = m.read(tree, 16 * tree_n)
+        out = bytearray(t5_tree)
+        leaves = []
+        for i in range(tree_n):
+            if struct.unpack_from(">i", t5_tree, 16 * i)[0] >= 0:  # children: offsets into this array
+                pass
+            else:
+                cnt, np_ = struct.unpack_from(">iI", t5_tree, 16 * i + 8)
+                out[16 * i + 12:16 * i + 16] = u32(-1 if cnt else 0)
+                leaves.append(m.read(np_, 2 * cnt) if cnt else b"")
+        tree_off = s.pos
+        for i in range(tree_n):
+            if struct.unpack_from(">i", t5_tree, 16 * i)[0] >= 0:
+                for k in range(2):
+                    c = struct.unpack_from(">I", t5_tree, 16 * i + 8 + 4 * k)[0]
+                    out[16 * i + 8 + 4 * k:16 * i + 12 + 4 * k] = u32(s.ref(tree_off + (c - tree)))
+        s.put(bytes(out))
+        for data in leaves:
+            if data:
+                s.align(1)
+                s.put(data)
+
+
+class ScriptStrings(list):
+    """The zone's script string list: index 0 is the empty string; BO1 indices are mapped through .index()."""
+
+    def __init__(self, t5_strings):
+        super().__init__([""])
+        self.t5 = t5_strings
+        self.map = {0: 0}
+
+    def index(self, t5_index):
+        if t5_index not in self.map:
+            self.map[t5_index] = len(self)
+            self.append(self.t5[t5_index])
+        return self.map[t5_index]
+
+
+def t5_script_strings(m, lst):
+    """The BO1 zone's script strings, from the XAssetList zoneload.py read (SCRATCH): {count, strings, ...}."""
+    count, arr = m.u32(lst), m.u32(lst + 4)
+    return [m.read(m.u32(arr + 4 * i), 256).split(b"\0")[0].decode("latin-1") if arr else "" for i in range(count)]
+
+
+def write_zone(assets, strings=()):
+    """assets: [(type, writer(stream))]; strings: the zone's script strings (written after the asset list header, as
+    BO2's Load_ScriptStringList 0x822AEFE8 reads them). Returns the zone (XFile header + body)."""
     s = Stream()
-    s.put(struct.pack(">6i", 0, 0, 0, 0, len(assets), -1), block_data=False)
+    s.put(struct.pack(">6i", len(strings), -1 if strings else 0, 0, 0, len(assets), -1), block_data=False)
+    if strings:
+        s.align(3)
+        s.put(u32(-1) * len(strings))
+        for st in strings:
+            s.align(0)
+            s.put(st.encode("latin-1") + b"\0")
     s.align(3)
     s.put(b"".join(struct.pack(">ii", t, -1) for t, _ in assets))
     for _, w in assets:
@@ -304,12 +407,21 @@ def write_zone(assets):
 def convert(source, name, z5=None):
     m, h, name = open_source(source, name)
     assets = []
+    strings = ScriptStrings(t5_script_strings(m, Z.SCRATCH) if z5 is not None else [""])
     if z5 is not None:
         com = [hh for i, t, hh in z5.assets if t == 14]
         if com:
             assets.append((14, lambda s: write_comworld(s, m, com[-1], name)))
+        game = [hh for i, t, hh in z5.assets if t == 15]
+        if game:
+            # the string list is written before the assets: collect the names the nodes use first
+            p = game[-1] + 4
+            for i in range(m.u32(p)):
+                for k in range(5):
+                    strings.index(m.u16(m.u32(p + 4) + 0x80 * i + 6 + 2 * k))
+            assets.append((16, lambda s: write_gameworld(s, m, game[-1], name, strings)))
     assets.append((COL_MAP_MP, lambda s: write_clipmap(s, m, h, name)))
-    return write_zone(assets)
+    return write_zone(assets, strings if len(strings) > 1 else ())
 
 
 def main():

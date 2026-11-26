@@ -26,7 +26,7 @@ PROFILES = {
                g_pos=0x82B98148, g_index=0x82BA0168, g_blocks=0x82B98144, nblocks=7, list_size=0x10,
                file_blocks=(0, 4, 5, 6), code=(0x821D8000, 0x821F2000), saverest=(0x825EA800, 0x825EAC00)),
     "t6": dict(load_stream=0x822CC1D8, alloc=0x822CC168, push=0x822CC060, pop=0x822CC0E8, inc=0x822CC180,
-               to_pointer=0x822CC380, load_xstring=0x822CC3A8, load_file=0x822AD5D8, script_string=None,
+               to_pointer=0x822CC380, load_xstring=0x822CC3A8, load_file=0x822AD5D8, script_string=0x822CC438,
                link=0x822C6B18, read_string=0x822AD728, read_some=None,
                load_script_strings=0x822AEFE8, load_xasset=0x822C4578,
                var_list=0x82DB3D14, var_script_strings=0x82DB40A0, var_xasset=0x82DB3BA4,
