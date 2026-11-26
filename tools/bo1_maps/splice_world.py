@@ -152,6 +152,22 @@ def fit(build, start, end, label):
     raise SystemExit(f"{label}: no padding ends at {end:#x}")
 
 
+def fit_aligned(build, end, label, align=4096):
+    """With relocation: the smallest padding whose end differs from the original's by a multiple of align (so the
+    data after it keeps its alignment: sound banks align their data to 2048 in block 5); the asset may be larger or
+    smaller than the original."""
+    natural = build(0, False).pos
+    target = end + -((end - natural) // align) * align if natural > end else end - ((end - natural) // align) * align
+    for extra in (False, True):
+        for pad in range(max(0, target - natural - 8), target - natural + 8):
+            s = build(pad, extra)
+            if s.pos == target:
+                print(f"{label}: padded {pad} bytes, extra leaf entry {extra}, ends at {s.pos:#x} "
+                      f"({s.pos - end:+#x} against the original)")
+                return s
+    raise SystemExit(f"{label}: no padding ends at {target:#x}")
+
+
 def main():
     bo2_zone, fp_path, bo1_zone, bo1_image, out = sys.argv[1:6]
     opt = dict(zip(sys.argv[6::2], sys.argv[7::2]))  # --ents <translated entity string> --aliases <json>
@@ -167,17 +183,40 @@ def main():
     strings = FixedStrings(T.t5_script_strings(m, Z.SCRATCH), bo2_strings(bo2_zone), aliases)
     name = "maps/mp/zm_nacht.d3dbsp"
     gi, gf0, gb0, gf1, gb1 = info[GAME]
-    target_nodes = 889
-    g = fit(lambda pad, extra: gameworld(gb0["5"], gb1["5"], m, game_h, name, strings, target_nodes, pad, extra),
-            gb0["5"], gb1["5"], "game_map_mp")
+    target_nodes = 889  # keeps the runtime block (base nodes) the size Nuketown's had
     ci, cf0, cb0, cf1, cb1 = info[COL]
-    c = fit(lambda pad, extra: clipmap(cb0["5"], m, h, name, pad, ents_text), cb0["5"], cb1["5"], "col_map_mp")
+    relocs = opt.get("--relocs")  # reloc_scan.py's table: replacements may then have any size
+    gfx_edits, gfx_patches, mg = [], [], 0
+    if relocs and "--gfx" in sys.argv:  # the render world too (t6gfx.py); it comes before the game world
+        import t6gfx
+        gfx_h = [hh for i, t, hh in z5.assets if t == 18][-1]
+        gfx_edits, gfx_patches, mg = t6gfx.convert(m, gfx_h, open(bo2_zone, "rb").read())
+        print(f"gfx_map: {len(gfx_edits)} regions, {mg:+#x} bytes in block 5")
+    if relocs:
+        g = fit_aligned(lambda pad, extra: gameworld(gb0["5"] + mg, gb1["5"] + mg, m, game_h, name, strings,
+                                                     target_nodes, pad, extra), gb1["5"] + mg, "game_map_mp")
+        dg = g.pos - (gb1["5"] + mg)  # everything after the game world moves by dg, the collision included
+        c = fit_aligned(lambda pad, extra: clipmap(cb0["5"] + mg + dg, m, h, name, pad, ents_text),
+                        cb1["5"] + mg + dg, "col_map_mp")
+        dc = c.pos - (cb1["5"] + mg + dg)
+    else:
+        g = fit(lambda pad, extra: gameworld(gb0["5"], gb1["5"], m, game_h, name, strings, target_nodes, pad, extra),
+                gb0["5"], gb1["5"], "game_map_mp")
+        c = fit(lambda pad, extra: clipmap(cb0["5"], m, h, name, pad, ents_text), cb0["5"], cb1["5"], "col_map_mp")
     if strings.node_names:  # fit() builds the game world several times: count one build's worth
         print(f"named nodes: {strings.named} of {len(strings.node_names)} expected")
     if strings.missing:
         print("script strings not in the BO2 zone (set to none):", sorted(strings.missing)[:20])
     d = open(bo2_zone, "rb").read()
-    new = d[:gf0] + bytes(g.out) + d[gf1:cf0] + bytes(c.out) + d[cf1:]
+    if relocs:
+        import zone_rebuild as R
+        new, changed, mismatched = R.rebuild(d, R.load_relocs(relocs), gfx_edits + [
+            (gf0, gf1, bytes(g.out), {5: (gb1["5"], dg)}),
+            (cf0, cf1, bytes(c.out), {5: (cb1["5"], dc)})], patches=gfx_patches)
+        print(f"relocated: {changed} offsets shifted, {mismatched} table entries did not match the file, "
+              f"{len(R.rebuild.dangling)} pointed into replaced data")
+    else:
+        new = d[:gf0] + bytes(g.out) + d[gf1:cf0] + bytes(c.out) + d[cf1:]
     open(out, "wb").write(new)
     print("wrote", out, len(new), "bytes")
 

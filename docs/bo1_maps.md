@@ -205,6 +205,122 @@ string list (set to none), only one player respawn location (the start room).
   BO1 has world LOD chains and per-surface sky lists that BO2 dropped. Cells, portals, AABB trees, surfaces
   (`srfTriangles_t` + material + lightmap/probe/light indices + bounds) and brush models keep their shape.
 
+### Fitting every BO1 map: relocating zone rebuild
+
+Measured world sizes (MB; render world = data + vertex/image data; paths include the BO1 → BO2 growth):
+
+| BO1 map | render world | collision | paths | | BO2 base | render world | collision | paths |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Nacht | 17.5 | 1.8 | 0.24 | | Nuketown | 30.0 | 3.7 | 0.38 |
+| Verrückt | 24.6 | 2.3 | 1.03 | | TranZit | 38.7 | 10.3 | 1.59 |
+| Shi No Numa | 43.5 | 5.7 | 1.74 | | Die Rise | 26.4 | 6.9 | 0.62 |
+| Der Riese | 37.7 | 5.9 | 0.46 | | Mob of the Dead | 27.4 | 6.0 | 0.64 |
+| Kino der Toten | 44.1 | 5.7 | 0.74 | | Buried | 23.7 | 6.4 | 0.68 |
+| Five | 40.4 | 5.0 | 0.63 | | Origins | 26.8 | 7.1 | 0.82 |
+| Ascension | 42.2 | 6.3 | 0.71 | | | | | |
+| Call of the Dead | 39.1 | 7.7 | 1.29 | | | | | |
+| Shangri-La | 41.8 | 8.5 | 0.37 | | | | | |
+| Moon | 39.9 | 8.6 | 1.04 | | | | | |
+
+Padding into a base map's slots fits only Nacht and Verrückt into Nuketown, and no base fits every map. So zones are
+now **rebuilt with relocation** instead:
+
+* `reloc_scan.py <zone> <out.bin> <image>` runs BO2's loader over the whole zone and records every stored block
+  offset (each word converted by `DB_ConvertOffsetToPointer` 0x822CC380 or `DB_ConvertOffsetToAlias` 0x822CC358)
+  with its file position; the root's own reads (depends and asset arrays) report through `zoneload.raw_hook`.
+  Nuketown's map zone: 144,832 offsets, all into block 5, in 84 s.
+* `zone_rebuild.py`: replace file ranges with data of any size; every offset past an edit is shifted (each boundary is
+  compared with the original offset), the header's sizes are fixed, and offsets from outside into replaced data are
+  reported (or remapped by a caller-supplied function). Shifts must be multiples of 4096: sound banks align their data
+  to 2048 in block 5, so other shifts change their padding and everything after them.
+* `splice_world.py ... --relocs <table>` writes Nacht's paths and collision at their natural sizes (the zone shrinks
+  by 2.16 MB). Checked: all 3,179 assets load; every other asset keeps its exact footprint; memory after the edits
+  matches the padded build word for word (shifted); in game the match reaches round 1.
+* Inbound references: none point into the collision or paths; into Nuketown's render world, 35,809 come from its
+  collision (replaced anyway) and 2 from elsewhere (one asset-list entry, one model, asset 3152) — these must be kept
+  when the render world is replaced.
+* The deferred block 3 is stored after the last asset in block order (Nuketown: 21,516,288 bytes = its header size),
+  so render data there can be edited and shifted the same way.
+
+The same rebuild will add assets (new asset-list entries are block 5 data at the zone's start), e.g. the window
+barrier and its animations, and extend the script string list.
+
+### Render world layouts (360; from the load traces and the data)
+
+Header: BO1 0x4A8 bytes, BO2 0x460. Field pairs (BO1 → BO2): planeCount 0x08 → 0x08, nodeCount 0x0C → 0x0C,
+surfaceCount 0x10 → 0x10, streamInfo 0x14 → 0x14 (aabbTreeCount, trees, leafRefCount, leafRefs), sunLight 0x100 →
+0x100, primaryLightCount 0x114 → 0x108, dpvsPlanes 0x154 → 0x174 (cellCount, planes 20 B, nodes u16,
+sceneEntCellBits), cellBitsCount/cells 0x164/0x168 → 0x184/0x188, draw 0x16C → 0x18C (probeCount, probes,
+probeTextures, lightmapCount, lightmaps, lightmap textures), vertexCount 0x208 → 0x1A8, vertices 0x20C (44 B each) →
+vertexDataSize0 0x1AC + vd0 0x1B0 (28 B each), BO1 layer data 0x230/0x234 → vertexDataSize1 0x1D4 + vd1 0x1D8 (block 7,
+not in the file), indexCount 0x25C + indices 0x260 → 0x1DC + 0x1E0, light grid 0x284 → 0x204, brush models 0x2BC/0x2C0
+→ 0x298/0x29C, materialMemory 0x2E0/0x2E4 (124 in Nacht, materials inline) → after 0x29C (~1,960 nested reads),
+dpvs 0x3B0 → 0x36C (smodelCount, staticSurfaceCount, lit/decal(BO1)/trans(BO2)/emissive ranges, vis data counts and
+runtime arrays, sortedSurfIndex u16 0x400 → 0x3BC, smodelInsts 40 B → 36 B 0x404 → 0x3C0, surfaces 80 B → 96 B
+0x408 → 0x3C4, smodelDrawInsts 44 B → 240 B 0x410 → 0x3C8 (BO2: static models' XModels inline after it)).
+
+* **BO2 world vertex (28 B, vd0)**: position as 4 × s16 (x, y, z, binormal sign), color RGBA8, texcoord half2, packed
+  normal, packed tangent, lightmap coord (2 × 16-bit). The world shaders (`*world_quant`) decode
+  `pos = q * vertexToObjectOffsetScale.w + vertexToObjectOffsetScale.xyz`, set per surface.
+* **Surface** (BO1 80 B → BO2 96 B): BO2 starts with that vec4 (offset xyz, scale w; Nuketown uses 0.25), then the
+  shared `srfTriangles_t` (mins + vertex data offset 0, maxs + vertex data offset 1, firstVertex, himipRadiusInvSq,
+  vertexCount u16, triCount u16, baseIndex), material, lightmap/probe/primary light/flags bytes, bounds.
+* **Cell** 56 B → 48 B (BO2 drops cullGroupCount/cullGroups); AABB tree nodes 40 B in both; planes 20 B and BSP
+  nodes u16 in both.
+* Shaders: `tools/inspect/ff_shaders.py <ff> --dump` extracts a zone's shaders; the kit's `bo2zm_hlsl.exe <in> <out>
+  <shader_common.h>` translates them (inputs and constants readable).
+
+Plan: edit Nuketown's render world array by array with the relocating rebuild (fields not converted yet stay
+Nuketown's): vertices, indices, surfaces + sortedSurfIndex + dpvs counts, cells with their trees and portals, BSP planes
+and nodes, brush models; static models, occluders and shadow-geometry lists emptied; materials mapped to Nuketown's at
+first, then Nacht's own. Keep each edit's size change a multiple of 128 (pad a count-flexible array in it) and the
+asset's total a multiple of 4096.
+
+### Render world converted: Nacht's geometry renders (2026-11-25 night)
+
+`t6gfx.py` (called by `splice_world.py ... --relocs <table> --gfx`) edits Nuketown's world in five regions:
+streaming trees + leaf refs; BSP planes, nodes, cells with AABB trees, portals (+ bounds) and probe lists; vertices
+(each surface its own quantized copy, 16-byte aligned groups, offset/scale vec4 per surface), the second stream (one
+shared default block), indices; brush models; one tail region from the shadow lists to the surfaces (shadow lists
+emptied; light regions, visibility data and static model instances copied as they were; sorted surfaces; surfaces).
+In game the match reaches round 1 and Nacht's rooms, beams and stairs render.
+
+What it took (checks: footprints of all other assets unchanged; the world's simulated size equals the loader's):
+* Second vertex stream (header 0x1DC/0x1E0, 8 B per vertex, offset `vo1`): 128-aligned, not 4096. Index buffer:
+  header 0x204/0x208 (Nuketown 400,264 indices). Surface `vo0` = byte offset into vd0.
+* The tail's copied part holds 128-aligned visibility data, so its start must keep its position modulo 128.
+* The sorted surface list's size change was 16 mod 32 while dummy surfaces move in steps of 32: dummy static surfaces
+  (outside every draw range) are inserted after Nacht's static ones; brush models and leaf refs are renumbered.
+* Material: surfaces point at alias slots (slot → material). The material must be a quantized-world one (`wq`/`wqc`,
+  flags 0x30, e.g. `wqc/wood_burned`): `wpc` materials expect another vertex format (a black wire was picked first).
+
+Not yet: Nacht's materials and textures (everything is one Nuketown material), lightmaps (Nuketown's, with Nacht's UVs:
+over-bright), the lightmap coordinate format (written as half floats, unverified), light grid, reflection probes, sky,
+static models (props), occluders and outdoor bounds (still Nuketown's).
+
+## Remaining plan (in order)
+
+1. **Lightmaps and lighting.** Confirm the BO2 lightmap coordinate format (half float vs 16-bit unorm) from a
+   `*world_quant` shader's fetch and Nuketown's data. Convert Nacht's lightmap images (inline in its world, block 2)
+   to BO2 images and replace Nuketown's lightmap array (header 0x198/0x19C, images inline after it). Then the light
+   grid (0x22C..0x26C: BO1 colors → BO2 entries + SH coeffs), reflection probes (0x18C/0x190) and the sun/sky.
+2. **Materials and textures.** Nacht's 124 world materials and 181 images are inline in its world. For each: convert
+   the image (both games use Xbox 360 GPU textures; header layouts differ), then write a BO2 material that copies a
+   Nuketown `wq`/`wqc` material of the same kind (opaque, alpha-tested, decal, layered) and swaps its images. Insert
+   them in the world's material list (materialMemory, 0x298/0x29C) with the relocating rebuild; surfaces point at
+   them. Layered/blended materials need the second vertex stream (vd1, block 7) — check what fills it.
+3. **Static models (props)** and **window barricades**: new assets. Copy XModels/XAnims between zones with references
+   rewritten (the relocating rebuild can add asset-list entries and script strings): Nacht's props (BO1 XModels →
+   BO2), TranZit's `zmcore_basicwoodbarrier` zbarrier and its 12 board animations (then `nacht_ents.py --windows`).
+4. **Clean-ups.** Nuketown's occluders and outdoor bounds (zero them), its static models (no longer referenced; drop
+   or move), primary lights (com_map: Nacht's 20 lights), Nacht's sounds and music, the pin and start-location images,
+   globe order, removal of the diagnostic Lua wrappers.
+5. **Install path.** Fold every step into `tools/install_bo1_maps.py`: decode the user's BO1 and BO2 zones, rename
+   Nuketown's zones, scan relocations, convert (collision, paths, entities, render world, scripts via gsc-tool),
+   rebuild, encode, install. Nothing from either game in the repository.
+6. **More maps.** Relocation removes the size limits (table above), so the same pipeline should take Verrückt, Shi No
+   Numa, Der Riese and the rest; each needs its own entity/zone translation and map script edits.
+
 ## Next
 
 * **Render world**: pair the BO1 and BO2 header fields (traces above), convert vertices/indices/surfaces/cells, map

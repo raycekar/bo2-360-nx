@@ -143,6 +143,7 @@ class Zone:
         self.max_steps = 0
         self.pool = 0x30000000  # copies of asset headers
         self.hot = {}
+        self.raw_hook = None  # optional callback(dest, size, file position, block) for the root's direct reads
 
     # ---- stream state (g_streamPos / g_streamPosIndex kept in guest memory too) ----
     @property
@@ -160,6 +161,12 @@ class Zone:
     @index.setter
     def index(self, v):
         self.mem.w32(self.p["g_index"], v)
+
+    def raw_read(self, dest, n):
+        # the root's direct reads (list, depends and asset arrays), reported to raw_hook (relocation scans)
+        if self.raw_hook:
+            self.raw_hook(dest, n, self.fpos, (dest - BLOCK_BASE) // 0x08000000 if dest >= BLOCK_BASE else -1)
+        self.mem.write(dest, self.read_file(n))
 
     def read_file(self, n):
         b = self.file[self.fpos:self.fpos + n]
@@ -615,7 +622,7 @@ class Zone:
                 self.hle_alloc()
                 arr = self.r[3]
                 self.mem.w32(lst + 12, arr)
-                self.mem.write(arr, self.read_file(4 * dcount))
+                self.raw_read(arr, 4 * dcount)
                 self.pos = self.pos + 4 * dcount
                 for i in range(dcount):
                     if self.mem.u32(arr + 4 * i) == 0xFFFFFFFF:
@@ -632,7 +639,7 @@ class Zone:
             self.hle_alloc()
             assets = self.r[3]
             self.mem.w32(lst + count_off + 4, assets)
-            self.mem.write(assets, self.read_file(count * 8))
+            self.raw_read(assets, count * 8)
             self.pos = self.pos + count * 8
             n = count if stop is None else min(stop, count)
             for i in range(n):
