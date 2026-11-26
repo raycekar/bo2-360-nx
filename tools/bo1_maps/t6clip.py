@@ -5,7 +5,7 @@ alignment simulated exactly, so pointers shared between arrays (brush side and n
 lists) can be written as offsets: ((block << 29) | offset) + 1.
 
 usage: python -I t6clip.py <decoded BO1 zone> <BO1 default.image.bin> <out.zone> [--name maps/mp/zm_nacht.d3dbsp]
-Not yet converted: static models (their XModels), mapEnts, dynamic entities. The output loads completely through
+Not yet converted: static models (their XModels), dynamic entities. mapEnts carries BO1's entity string as is. The output loads completely through
 BO2's own Load_clipMap_t (zoneload.py --game t6), and every shared pointer resolves to the same data as in BO1.
 """
 import pickle
@@ -123,7 +123,9 @@ def convert(source, name):
     hset(0x90, cmodels_n), hset(0x94, -1 if cmodels_n else 0)
     hset(0x98, clusters), hset(0x9C, cluster_bytes), hset(0xA0, -1 if clusters * cluster_bytes else 0)
     hset(0xA4, c.f(0xA8))  # vised
-    hset(0xA8, 0)  # mapEnts: not yet
+    t5_ents = c.f(0xAC)  # BO1 MapEnts {name, entityString, numEntityChars}
+    ents_text = m.read(m.u32(t5_ents + 4), m.u32(t5_ents + 8)) if t5_ents else b""
+    hset(0xA8, -1 if ents_text else 0)  # MapEnts follows inline (BO2 registers it as the map_ents asset)
     hset(0xAC, -1)  # box_brush follows
     # box_model (cmodel_t, inline at 0xB0, 0x4C): T5 keeps it inline at 0xB4 as mins, maxs, radius, leaf (0x48)
     bm = m.read(h + 0xB4, 0x48)
@@ -226,6 +228,12 @@ def convert(source, name):
     if clusters * cluster_bytes:
         s.align(0)
         s.put(m.read(c.f(0xA4), clusters * cluster_bytes))
+    if ents_text:  # Load_MapEnts (0x822B4860): struct (temp block), name, entity string; no triggers (as Nuketown)
+        s.put(struct.pack(">iii6I", -1, -1, len(ents_text), 0, 0, 0, 0, 0, 0), block_data=False)
+        s.align(0)
+        s.put(name.encode() + b"\0")
+        s.align(0)
+        s.put(ents_text)
     # box_brush: 0x60, 16-aligned, its sides and verts inline
     s.align(15)
     bb = bytearray(m.read(c.f(0xB0), 0x60))
