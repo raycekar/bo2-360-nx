@@ -83,7 +83,9 @@ def open_source(source, name):
     return m, h, name
 
 
-def write_clipmap(s, m, h, name):
+def write_clipmap(s, m, h, name, vis_pad=0):
+    """vis_pad: extra zero bytes after the cluster visibility (with one cluster, as BO1 maps have): used to give the
+    asset an exact stream size when it replaces another map's (tools: splice)."""
     c = T5Clip(m, h)
     planes_n, planes_p = c.f(0x08), c.f(0x0C)
     mats_n = c.f(0x18)
@@ -120,7 +122,8 @@ def write_clipmap(s, m, h, name):
     hset(0x80, parts_n), hset(0x84, -1 if parts_n else 0)
     hset(0x88, aabb_n), hset(0x8C, -1 if aabb_n else 0)
     hset(0x90, cmodels_n), hset(0x94, -1 if cmodels_n else 0)
-    hset(0x98, clusters), hset(0x9C, cluster_bytes), hset(0xA0, -1 if clusters * cluster_bytes else 0)
+    assert vis_pad == 0 or clusters == 1, "visibility padding needs a single cluster"
+    hset(0x98, clusters), hset(0x9C, cluster_bytes + vis_pad), hset(0xA0, -1 if clusters * cluster_bytes else 0)
     hset(0xA4, c.f(0xA8))  # vised
     t5_ents = c.f(0xAC)  # BO1 MapEnts {name, entityString, numEntityChars}
     ents_text = m.read(m.u32(t5_ents + 4), m.u32(t5_ents + 8)) if t5_ents else b""
@@ -226,7 +229,7 @@ def write_clipmap(s, m, h, name):
                    for i in range(cmodels_n)))
     if clusters * cluster_bytes:
         s.align(0)
-        s.put(m.read(c.f(0xA4), clusters * cluster_bytes))
+        s.put(m.read(c.f(0xA4), clusters * cluster_bytes) + bytes(vis_pad))
     if ents_text:  # Load_MapEnts (0x822B4860): struct (temp block), name, entity string; no triggers (as Nuketown)
         s.put(struct.pack(">iii6I", -1, -1, len(ents_text), 0, 0, 0, 0, 0, 0), block_data=False)
         s.align(0)

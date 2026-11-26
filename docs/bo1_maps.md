@@ -109,7 +109,27 @@ Lessons learned on the way:
   Nuketown): node spawnflags |= 0x300000, link flags 0x28.
 * **col_map_mp** with **map_ents** inline.
 
+### In game (2026-11-25 evening)
+
+1. **The Nacht slot loads a real map.** Nuketown's zones renamed in place (`nuked` → `nacht`, same length, so no
+   offsets move: zm_nacht.ff, zm_nacht_patch.ff, en_zm_nacht_loc.ff, zm_nacht.ipak, zmb_nacht_* sound banks) start a
+   match from Nacht's globe pin. Two engine details were needed: map zones get their `<map>_patch` zone only when
+   listed in the zone loader's table at 0x8296EBD8, so the hook points its unused `common_mp` entry at zm_nacht; and
+   unresolved GSC imports are now always logged (`[gsc] unresolved import ...`).
+2. **Nacht's collision and path network replace Nuketown's** (`tools/bo1_maps/splice_world.py`). Each replacement
+   starts at the original's block 5 position and is padded to end at the same place (collision: cluster visibility;
+   paths: 889 nodes with inert spares, the visibility table extended (2 bits per node pair, triangular), the
+   smoothing cache, one repeated leaf entry for 4-byte parity). BO2's loader confirms all 2,133 later assets keep
+   their positions. In game the zone loads and the intro reads "NACHT DER UNTOTEN / SURVIVAL", but the match does not
+   start: Nuketown's scripts look for their own spawn structs, zones and barriers in the entity string, and get
+   Nacht's BO1 entities instead.
+
 ## Next
+
+* **Entity translation**: rewrite Nacht's BO1 entities (player starts, zombie spawners, window barricades, zone
+  volumes, power, perks, wall weapons) into the structs and entities BO2's Zombies scripts read (Nuketown's entity
+  string is the reference), plus a small map GSC if needed.
+* **Render world (gfx_map)**, then Nacht's own lights (com_map), models and textures, so it looks like Nacht.
 
 1. Convert Nacht's map zone. BO1 360 zones decode (Salsa20 with the flag-0 key from the BO1 executable, one shared
    200-entry IV table, deflate chunks up to `0xC000`). The T5 asset list then has to be rewritten as T6 assets:
