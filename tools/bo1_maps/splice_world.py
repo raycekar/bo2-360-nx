@@ -26,13 +26,14 @@ def bo2_strings(zone):
 class FixedStrings:
     """Map BO1 script string indices to the BO2 zone's existing list (by text; 0 when absent)."""
 
-    def __init__(self, t5, t6):
+    def __init__(self, t5, t6, aliases=None):
         self.t5, self.lookup, self.missing = t5, {s: i for i, s in enumerate(t6)}, set()
+        self.aliases = aliases or {}
 
     def index(self, i):
         if not i:
             return 0
-        s = self.t5[i]
+        s = self.aliases.get(self.t5[i], self.t5[i])
         if s not in self.lookup:
             self.missing.add(s)
         return self.lookup.get(s, 0)
@@ -112,10 +113,10 @@ def gameworld(start, end, m, h, name, strings, target_nodes, smooth_pad, extra_l
     return s
 
 
-def clipmap(start, m, h, name, vis_pad):
+def clipmap(start, m, h, name, vis_pad, ents_text=None):
     s = T.Stream()
     s.pos = start
-    T.write_clipmap(s, m, h, name, vis_pad=vis_pad)
+    T.write_clipmap(s, m, h, name, vis_pad=vis_pad, ents_text=ents_text)
     return s
 
 
@@ -136,19 +137,24 @@ def fit(build, start, end, label):
 
 def main():
     bo2_zone, fp_path, bo1_zone, bo1_image, out = sys.argv[1:6]
+    opt = dict(zip(sys.argv[6::2], sys.argv[7::2]))  # --ents <translated entity string> --aliases <json>
+    ents_text = open(opt["--ents"], "rb").read() if "--ents" in opt else None
+    aliases = json.load(open(opt["--aliases"])) if "--aliases" in opt else None
+    global BO2_IMAGE
+    BO2_IMAGE = opt.get("--bo2-image", BO2_IMAGE)
     fp = json.load(open(fp_path))
     info = {t: (i, f0, b0, f1, b1) for i, t, f0, b0, f1, b1 in fp if t in (GAME, COL)}
     m, h = T.load_t5_clipmap(bo1_zone, bo1_image)
     z5 = T.load_t5_clipmap.zone
     game_h = [hh for i, t, hh in z5.assets if t == 15][-1]
-    strings = FixedStrings(T.t5_script_strings(m, Z.SCRATCH), bo2_strings(bo2_zone))
+    strings = FixedStrings(T.t5_script_strings(m, Z.SCRATCH), bo2_strings(bo2_zone), aliases)
     name = "maps/mp/zm_nacht.d3dbsp"
     gi, gf0, gb0, gf1, gb1 = info[GAME]
     target_nodes = 889
     g = fit(lambda pad, extra: gameworld(gb0["5"], gb1["5"], m, game_h, name, strings, target_nodes, pad, extra),
             gb0["5"], gb1["5"], "game_map_mp")
     ci, cf0, cb0, cf1, cb1 = info[COL]
-    c = fit(lambda pad, extra: clipmap(cb0["5"], m, h, name, pad), cb0["5"], cb1["5"], "col_map_mp")
+    c = fit(lambda pad, extra: clipmap(cb0["5"], m, h, name, pad, ents_text), cb0["5"], cb1["5"], "col_map_mp")
     if strings.missing:
         print("script strings not in the BO2 zone (set to none):", sorted(strings.missing)[:20])
     d = open(bo2_zone, "rb").read()

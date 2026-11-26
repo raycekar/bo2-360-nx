@@ -83,7 +83,7 @@ def open_source(source, name):
     return m, h, name
 
 
-def write_clipmap(s, m, h, name, vis_pad=0):
+def write_clipmap(s, m, h, name, vis_pad=0, ents_text=None):
     """vis_pad: extra zero bytes after the cluster visibility (with one cluster, as BO1 maps have): used to give the
     asset an exact stream size when it replaces another map's (tools: splice)."""
     c = T5Clip(m, h)
@@ -126,7 +126,10 @@ def write_clipmap(s, m, h, name, vis_pad=0):
     hset(0x98, clusters), hset(0x9C, cluster_bytes + vis_pad), hset(0xA0, -1 if clusters * cluster_bytes else 0)
     hset(0xA4, c.f(0xA8))  # vised
     t5_ents = c.f(0xAC)  # BO1 MapEnts {name, entityString, numEntityChars}
-    ents_text = m.read(m.u32(t5_ents + 4), m.u32(t5_ents + 8)) if t5_ents else b""
+    if ents_text is None:  # BO1's entity string as is, unless a translated one is given
+        ents_text = m.read(m.u32(t5_ents + 4), m.u32(t5_ents + 8)) if t5_ents else b""
+    elif not ents_text.endswith(b"\0"):
+        ents_text += b"\0"  # numEntityChars counts the terminator, as BO1's does
     hset(0xA8, -1 if ents_text else 0)  # MapEnts follows inline (BO2 registers it as the map_ents asset)
     hset(0xAC, -1)  # box_brush follows
     # box_model (cmodel_t, inline at 0xB0, 0x4C): T5 keeps it inline at 0xB4 as mins, maxs, radius, leaf (0x48)

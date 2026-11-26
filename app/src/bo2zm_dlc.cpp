@@ -28,7 +28,11 @@
 #include <rex/system/xmemory.h>
 #include <rex/types.h>
 
+#include <string>
+#include <string_view>
+
 #include "bo2zm_autoexec.h"
+#include "bo2zm_guest.h"
 
 // Custom maps (Black Ops 1 maps converted by tools/install_bo1_maps.py), off unless that installer turned the setting
 // on. Such a map arrives as a DLC pack in the unused fifth slot (dlc5.id: map pack index 7) whose load zone,
@@ -304,7 +308,42 @@ bool g_applied[kControllers] = {};
 
 }  // namespace
 
+// A custom map's scripts report progress in the dvar bo2zm_map_trace (setdvar); log each new value, since the game
+// prints its own script errors only in developer builds. Read every frame: FindDvar, then the dvar's string.
+static void TraceMapScripts(PPCContext& ctx, uint8_t* base) {
+  static uint32_t name = 0;
+  static std::string last;
+  if (!name) {
+    name = rex::Runtime::instance()->memory()->SystemHeapAlloc(32, 16);
+    if (!name) return;
+    std::strcpy(reinterpret_cast<char*>(base + name), "bo2zm_map_trace");
+  }
+  const auto saved = ctx;
+  ctx.r1.u64 = (ctx.r1.u32 - 512) & ~15u;
+  ctx.r3.u64 = name;
+  bo2zm::guest::Call<0x82496430>(ctx, base);  // dvar by name
+  const auto dvar = ctx.r3.u32;
+  uint32_t text = 0;
+  if (dvar) {
+    ctx.r1.u64 = (saved.r1.u32 - 512) & ~15u;
+    ctx.r3.u64 = dvar;
+    bo2zm::guest::Call<0x82496990>(ctx, base);  // its current string
+    text = ctx.r3.u32;
+  }
+  ctx = saved;
+  if (text < 0x1000 || text > 0xFFFFFF00u) return;
+  const char* s = reinterpret_cast<const char*>(base + text);
+  size_t n = 0;
+  while (n < 200 && s[n]) ++n;
+  if (n == 200 || last == std::string_view(s, n)) return;
+  last.assign(s, n);
+  REXLOG_INFO("[map script] {}", last);
+}
+
 void bo2zm::dlc::EveryFrame(PPCContext& ctx, uint8_t* base) {
+  if (REXCVAR_GET(bo2zm_custom_maps)) {
+    TraceMapScripts(ctx, base);
+  }
   if (!g_published.exchange(true)) [[unlikely]] {  // for menus.lua: whether to list the custom maps on the globe
     bo2zm::autoexec::ExecuteCommands(ctx, base, REXCVAR_GET(bo2zm_custom_maps) ? "set bo2zm_custom_maps_ui 1"
                                                                                 : "set bo2zm_custom_maps_ui 0");

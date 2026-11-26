@@ -8,7 +8,7 @@ it.
 
 | Map | Globe pin | Start location menu | Playable |
 | --- | --- | --- | --- |
-| Nacht der Untoten (`zm_nacht`) | yes (TranZit's pin image for now) | yes (Nuketown's small map image for now) | not yet: Start reports the missing `maps/mp/zm_nacht.d3dbsp` |
+| Nacht der Untoten (`zm_nacht`) | yes (TranZit's pin image for now) | yes (Nuketown's small map image for now) | partly: Nacht's collision, paths and entities with BO2 gameplay reach round 1 and zombies attack; it still looks like (dark) Nuketown, since the render world is not converted |
 
 ## Install and remove
 
@@ -124,12 +124,52 @@ Lessons learned on the way:
    start: Nuketown's scripts look for their own spawn structs, zones and barriers in the entity string, and get
    Nacht's BO1 entities instead.
 
+### Entities and map script (2026-11-25 night): round 1 on Nacht
+
+With Nacht's BO1 entity string in the zone, Nuketown's map script found none of its spawn points, zones or boxes and
+the match never left the intro card. Two parts fix that:
+
+1. **Entities** (`tools/bo1_maps/nacht_ents.py`): Nacht's entity string is rewritten into what BO2's Zombies scripts
+   read. Kept: player starts, intermission cameras, path nodes, the 15 zone volumes (start, box room, upstairs), the
+   door and debris triggers with their brush models, static brush models. Rewritten: the 42 BO1 zombie spawners become
+   `<zone>_spawners` spawn-location structs; 8 wall weapons become BO2 wallbuy structs with BO2 weapons and models
+   from Nuketown's zone (Kar98k → M14, M1 Carbine → B23R, Thompson → MP5, double barrel → Olympia, sawed-off →
+   AK74u, trench gun → Remington 870, BAR → M16, stielhandgranate → Semtex); the box becomes a `zbarrier_zmcore_MagicBox`.
+   From Nuketown: worldspawn and lights (the render world is still Nuketown's), the zombie and dog spawner entities.
+   Dropped: window boards, BO1 script models (their XModels are not in the zone), wall chalk (brush models past
+   Nuketown's render models: drawing `*147` crashed the renderer's model streaming), audio and Easter-egg triggers.
+   Traversal node names reuse Nuketown's (`pfN_auto2108`, `zm_mantle_over_40`), so the path nodes' script strings
+   resolve; `splice_world.py --ents <file> --aliases <json>` writes both.
+2. **Map script**: Nuketown's `maps/mp/zm_nacht.gsc` (renamed with the zone) is decompiled with
+   [gsc-tool](https://github.com/xensik/gsc-tool) 1.6.2, edited by `tools/bo1_maps/zm_nacht/script_edits.py` (no game
+   script is stored here), compiled again and written over the original inside `zm_nacht_patch` by `inject_gsc.py`
+   (same length, zero padded). The client scripts are still Nuketown's, so the server keeps registering the same
+   client fields (perk and Pack-a-Punch settings stay on); otherwise the client disconnects with
+   `EXE_CLIENT_FIELD_MISMATCH`.
+
+Diagnostics: a map script can `setdvar( "bo2zm_map_trace", ... )`; with `bo2zm_custom_maps` on, the app logs each new
+value as `[map script] ...`. The game itself prints script errors only in developer builds.
+
+Steps used (paths are examples; the zones come from your own game files):
+```
+python -I nacht_ents.py ents_nacht.txt ents_nuked.txt ents_nacht_bo2.txt aliases.json
+python -I splice_world.py zm_nacht_from_nuked.zone <footprint>.json zombie_cod5_prototype.zone default.image.bin \
+    zm_nacht.zone --ents ents_nacht_bo2.txt --aliases aliases.json --bo2-image default_mp.image.bin
+python -I zm_nacht/script_edits.py decompiled/t6 nacht_src
+gsc-tool -m comp -g t6 -s xb2 -w decompiled/t6 nacht_src
+python -I inject_gsc.py zm_nacht_patch.zone zm_nacht_patch_new.zone compiled/t6 maps/mp/zm_nacht.gsc maps/mp/zm_nacht_standard.gsc
+```
+then encode both zones (signed layout) into the pack.
+
+Known gaps: no window barricades (zombies walk in through open windows; BO2's `_zm_blockers` still has the BO1 board
+code path, untested), no perks (as in the original Nacht), BO1 pathnode targetnames `autoNN` are not in the zone's
+string list (set to none), only one player respawn location (the start room).
+
 ## Next
 
-* **Entity translation**: rewrite Nacht's BO1 entities (player starts, zombie spawners, window barricades, zone
-  volumes, power, perks, wall weapons) into the structs and entities BO2's Zombies scripts read (Nuketown's entity
-  string is the reference), plus a small map GSC if needed.
 * **Render world (gfx_map)**, then Nacht's own lights (com_map), models and textures, so it looks like Nacht.
+* Window barricades (try BO2's BO1-style board chunks with Nacht's board brush models).
+* Fold the steps above into `install_bo1_maps.py`.
 
 1. Convert Nacht's map zone. BO1 360 zones decode (Salsa20 with the flag-0 key from the BO1 executable, one shared
    200-entry IV table, deflate chunks up to `0xC000`). The T5 asset list then has to be rewritten as T6 assets:
