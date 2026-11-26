@@ -574,7 +574,7 @@ REX_HOOK_RAW(sub_823599E8) {
 REX_HOOK_RAW(sub_8252EED8) {
   const auto buffer = ctx.r4.u32, record = ctx.r5.u32;
   __imp__sub_8252EED8(ctx, base);
-  if (ctx.r3.u32 || !bo2zm::gsc::active) return;
+  if (ctx.r3.u32) return;  // logged for stock scripts too: custom maps (BO1 maps) depend on it
   const auto text = [&](uint32_t at) {
     const auto* start = reinterpret_cast<const char*>(base + at);
     size_t length = 0;

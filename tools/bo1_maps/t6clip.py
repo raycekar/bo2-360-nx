@@ -24,6 +24,7 @@ class Stream:
     """The zone body, with the block 5 position the loader would have."""
 
     def __init__(self):
+        self.runtime = 0  # bytes the loader allocates in block 1 (runtime, not in the file)
         self.out = bytearray()
         self.pos = 0  # block 5 offset
         self.log = []
@@ -328,6 +329,7 @@ def write_gameworld(s, m, h, name, strings):
             links.append(m.read(lp, 12 * count) if (count and lp) else b"")
             out += t6
         out += bytes(0x90 * 128)  # BO2 streams nodeCount + 128 nodes: spare slots for nodes added at run time
+        s.runtime += 16 + 16 * (n_nodes + 128)  # base nodes (16 bytes, 16-aligned) go to block 1: size it
         s.put(bytes(out))
         for data in links:
             if data:
@@ -401,12 +403,19 @@ def write_zone(assets, strings=()):
     convert.log = s.log
     body = bytes(s.out)
     virtual = (s.pos + 0xFFFF) & ~0xFFF
-    return struct.pack(">II8I", len(body), 0, TEMP_BLOCK, 0, 0, 0, 0, virtual, 0, 0) + body
+    runtime = (s.runtime + 0xFFF) & ~0xFFF
+    # block 2 (runtime physical): the skinned verts buffer, maxSkinnedVerts * 64 (Nuketown declares the same 0xA00000)
+    skinned = 163840 * 64
+    return struct.pack(">II8I", len(body), 0, TEMP_BLOCK, runtime, skinned, 0, 0, virtual, 0, 0) + body
 
 
 def convert(source, name, z5=None):
     m, h, name = open_source(source, name)
-    assets = []
+    # SkinnedVertsDef (360: 0x10 = name, maxSkinnedVerts, two buffers of maxSkinnedVerts * 32 bytes in the runtime
+    # physical block; Load 0x822B6590): every BO2 map zone has one (Nuketown: "skinnedverts", 163840); without it
+    # loading the map stops with "Could not load default asset 'skinnedverts'".
+    assets = [(56, lambda s: (s.put(struct.pack(">iIii", -1, 163840, -1, -1), block_data=False), s.align(0),
+                              s.put(b"skinnedverts\0")))]
     strings = ScriptStrings(t5_script_strings(m, Z.SCRATCH) if z5 is not None else [""])
     if z5 is not None:
         com = [hh for i, t, hh in z5.assets if t == 14]

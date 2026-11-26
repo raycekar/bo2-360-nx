@@ -24,6 +24,8 @@
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/runtime.h>
+#include <rex/system/xmemory.h>
 #include <rex/types.h>
 
 #include "bo2zm_autoexec.h"
@@ -65,7 +67,15 @@ REX_HOOK_RAW(sub_822AA8D0) {
   const uint32_t slot = rex::byte_swap(*reinterpret_cast<uint32_t*>(base + kZoneState + 0x4940));
   uint32_t* status = reinterpret_cast<uint32_t*>(base + kZoneState + 0x3FE8 + slot * 0x12C);
   *status = rex::byte_swap(rex::byte_swap(*status) | 0x80u);
-  REXLOG_INFO("[dlc] zone signature does not verify: accepted as a custom zone (slot {})", slot);
+  std::string zone_name;  // the longest text in the slot's 0x12C-byte entry (the zone's name)
+  for (uint32_t k = 0; k < 0x12C; ++k) {
+    const char* s = reinterpret_cast<const char*>(base + kZoneState + 0x3FE8 + slot * 0x12C + k);
+    size_t n = 0;
+    while (n < 64 && k + n < 0x12C && s[n] >= 0x20 && s[n] < 0x7F) ++n;
+    if (n > zone_name.size() && (k + n >= 0x12C || s[n] == 0)) zone_name.assign(s, n);
+    k += n;
+  }
+  REXLOG_INFO("[dlc] zone signature does not verify: accepted as a custom zone (slot {}, '{}')", slot, zone_name);
   ctx.r3.u64 = 1;
   g_reparse_maps = 10;  // a few frames: the zone's assets are linked by then
 }
@@ -237,6 +247,26 @@ void MergeStringTable(PPCContext& ctx, uint8_t* base, const char* name) {
               game_rows, replace.size());
 }
 
+// A map zone gets its "<map>_patch" zone only if its name is in the zone loader's table at 0x8296EBD8 (sub_822CB500):
+// ten zone names, then ten {patch zone name, 1} pairs. Entry 0 is common_mp (a Multiplayer zone, never loaded in
+// Zombies): point it and its pair at a custom map's names, in guest memory of our own.
+void RegisterPatchZone(uint8_t* base, const char* map) {
+  constexpr uint32_t kZones = 0x8296EBD8, kPairs = kZones + 10 * 4;
+  if (std::strcmp(GuestText(base, Be32(base, kZones)), "common_mp") != 0) {
+    return;  // not the TU18 table, or already taken
+  }
+  const std::string patch = std::string(map) + "_patch";
+  const uint32_t text = rex::Runtime::instance()->memory()->SystemHeapAlloc(64, 16);
+  if (!text) {
+    return;
+  }
+  std::memcpy(base + text, map, std::strlen(map) + 1);
+  std::memcpy(base + text + 32, patch.c_str(), patch.size() + 1);
+  SetBe32(base, kZones, text);
+  SetBe32(base, kPairs, text + 32);
+  REXLOG_INFO("[dlc] {} gets its patch zone {}", map, patch);
+}
+
 void ReparseMapsTable(PPCContext& ctx, uint8_t* base) {
   MergeStringTable(ctx, base, "zm/mapsTable.csv");
   MergeStringTable(ctx, base, "zm/gametypesTable.csv");
@@ -278,6 +308,9 @@ void bo2zm::dlc::EveryFrame(PPCContext& ctx, uint8_t* base) {
   if (!g_published.exchange(true)) [[unlikely]] {  // for menus.lua: whether to list the custom maps on the globe
     bo2zm::autoexec::ExecuteCommands(ctx, base, REXCVAR_GET(bo2zm_custom_maps) ? "set bo2zm_custom_maps_ui 1"
                                                                                 : "set bo2zm_custom_maps_ui 0");
+    if (REXCVAR_GET(bo2zm_custom_maps)) {
+      RegisterPatchZone(base, "zm_nacht");
+    }
   }
   if (g_reparse_maps.load(std::memory_order_relaxed) > 0 && --g_reparse_maps == 0) [[unlikely]] {
     ReparseMapsTable(ctx, base);
