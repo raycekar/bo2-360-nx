@@ -183,8 +183,32 @@ string list (set to none), only one player respawn location (the start room).
   adding entries there would move every pointer; the copies need a zone of their own that loads with the map, and the
   references inside them (block offsets into TranZit's zone, script strings) rewritten.
 
+### Render world (gfx_map): first measurements
+
+* Sizes (block deltas while the asset loads). Nacht (BO1 #416): 11.0 MB virtual (block 4), 6.5 MB physical (block 2:
+  vertex and image data), 0.7 MB runtime (block 1); header 0x4A8. Nuketown (BO2 #1040): 18.3 MB virtual (block 5),
+  11.7 MB delayed (block 3), 0.75 MB runtime (block 1). Nacht fits in Nuketown's footprint with room to spare, so the
+  splice approach works here too; a different base map is not needed for space.
+* Both games stream the **materials and images first used by the world inside the world asset** (BO1: 124 material
+  headers and 181 image headers; BO2 Nuketown: ~466 material-sized groups). So a converted world can carry Nacht's own
+  materials and textures inside the spliced asset, pointing at techsets that already exist in Nuketown's zone.
+* Load traces: `asset_trace.py <zone> t5|t6 <asset> <out>` (every Load_Stream with block, size, destination and the
+  header field that points at it, plus pointer conversions); `trace_summary.py` collapses one. BO1 header fields with
+  arrays: 0x18, 0x20, 0x3C, 0x100, 0x158–0x188, 0x20C (5.4 MB), 0x234, 0x260, 0x2A0–0x2E4, 0x38C–0x3FC. BO2:
+  0x18, 0x20, 0x100–0x140, 0x178–0x1A4, 0x1B0 (5.4 MB), 0x1D8 (block 7), 0x1E0, 0x208, 0x248–0x29C, 0x344–0x3FC.
+
+* Struct differences (OpenAssetTools' T5/T6 headers, PC layouts; the 360 traces are authoritative where they
+  differ): BO1 `GfxWorldDraw` has one `GfxWorldVertex` array (xyz, binormalSign, color, texCoord, lmapCoord, packed
+  normal and tangent: 44 bytes) plus a vertex-layer stream and three lightmap textures per array; BO2 has two packed
+  vertex streams (`vd0`, `vd1`, sizes in bytes), an index buffer and two lightmap textures. BO2 adds fog, LUT and
+  sky-grid volumes, spherical-harmonics lighting on static models and reflection probes, siege skins and hero lights;
+  BO1 has world LOD chains and per-surface sky lists that BO2 dropped. Cells, portals, AABB trees, surfaces
+  (`srfTriangles_t` + material + lightmap/probe/light indices + bounds) and brush models keep their shape.
+
 ## Next
 
+* **Render world**: pair the BO1 and BO2 header fields (traces above), convert vertices/indices/surfaces/cells, map
+  Nacht's materials onto BO2 techsets. Start by decoding BO2's `vd0`/`vd1` vertex formats from Nuketown's data.
 * **Copy assets between zones** (a zone of our own loaded with the map; references rewritten): first the window
   asset and its 12 board animations (then `--windows`), later Nacht's own models, materials and images.
 * **Render world (gfx_map)**, then Nacht's own lights (com_map), models and textures, so it looks like Nacht.
