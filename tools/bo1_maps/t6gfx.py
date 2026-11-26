@@ -25,6 +25,11 @@ BASE = {
     "tail_smodels": (0x3DCD3BC, 0x3DDF884, 0x385BA94, 0x386DF5C),  # static model instances
     "vd0_size": 0x523A30, "s2_default": 0x528CC, "s2_size": 0x68444,
     "primary_lights": 18, "probes": 26,
+    # the material list (465 entries of 8 bytes) and where Nuketown's inline materials end (file, block 5);
+    # the last material image's pixels end at this block 3 offset
+    "mat_array_end": (0x3D93E4E, 0x3836BD8), "mat_count": 465, "mats_end": 0x3854A18, "b3_insert": 0xBFF000,
+    # the world's outdoor image loads right after the materials: header + name (file), 16 bytes of block 5
+    "outdoor": (0x3DC6299, 0x3DC6376, 0x10),
 }
 BLOCK = 5
 
@@ -35,6 +40,10 @@ def u32(v):
 
 def ref(off):
     return ((BLOCK << 29) | off) + 1
+
+
+def unorm16(f):
+    return max(0, min(65535, round(f * 65535)))
 
 
 def half(f):
@@ -74,7 +83,28 @@ class T5World:
         return self.m.read(p, count * size) if p and count else b""
 
 
-def convert(m, h, data):
+def find_material(zone_path, image, name, data):
+    """The base surfaces' 8-byte material field (alias slot offset + byte fields) of a plain (flags 0x30) material."""
+    import contextlib
+    import io
+    import zoneload as Z
+    f0, f1 = BASE["tail_smodels"][1], BASE["tail"][1]
+    keys = {data[k + 0x40:k + 0x48] for k in range(f0, f1 - 95, 96)}
+    z = Z.Zone(zone_path, image, "t6")
+    with contextlib.redirect_stdout(io.StringIO()):
+        z.run(1041)
+    for key in sorted(keys):
+        if key[7] != 0x30:
+            continue
+        v = struct.unpack(">I", key[:4])[0]
+        slot = Z.BLOCK_BASE + 5 * 0x08000000 + ((v - 1) & 0x1FFFFFFF)
+        mat = z.mem.u32(slot)  # the slot holds the material; its first field is the name
+        if z.mem.read(z.mem.u32(mat), 96).split(b"\0")[0].decode("latin-1") == name:
+            return key
+    raise SystemExit(f"material {name} not on the base map's world surfaces")
+
+
+def convert(m, h, data, material=None, mats=None):
     """m, h: BO1 memory and render world header (zoneload); data: the decoded base zone.
     Returns (edits, patches, total block 5 change) for zone_rebuild.rebuild."""
     w = T5World(m, h)
@@ -211,7 +241,7 @@ def convert(m, h, data):
             u, t = struct.unpack_from(">2f", raw, 20)
             lu, lt = struct.unpack_from(">2f", raw, 28)
             vd0 += struct.pack(">4h", *q, -1 if bsign < 0 else 1) + raw[16:20] + struct.pack(">2H", half(u), half(t))
-            vd0 += raw[36:40] + raw[40:44] + struct.pack(">2H", half(lu), half(lt))
+            vd0 += raw[36:40] + raw[40:44] + struct.pack(">2H", unorm16(lu), unorm16(lt))  # lightmap UV: 2 x unorm16
         surf_info.append((center, scale, vo0, len(used), len(idx), tc))
         idx.extend(remap[v] for v in ix)
     longest = max([i[3] for i in surf_info] + [1])
@@ -236,6 +266,14 @@ def convert(m, h, data):
     model_n = w.f(0x2BC)
     models = w.arr(0x2C0, model_n, 60)
 
+    mat_list = {}  # with mats: the materialMemory list grows (the region then runs to its end)
+    if mats:
+        f0, f1, b0, b1 = BASE["models"]
+        arr_f0 = f1
+        BASE["models"] = (f0, BASE["mat_array_end"][0], b0, BASE["mat_array_end"][1])
+        old_list = data[arr_f0:BASE["mat_array_end"][0]]
+        memory = old_list[4:8]  # the first entry's memory size, for every new entry
+
     def build_models(o, extra):
         body = bytearray()
         for i in range(model_n):
@@ -243,13 +281,19 @@ def convert(m, h, data):
             start = struct.unpack_from(">i", mdl, 56)[0]
             body += mdl[0:28] + bytes(4) + mdl[28:56] + struct.pack(">i", sidx(start) if start >= 0 else start)
         body = bytes(body)
-        dummy = bytes(56) + u32(0) + u32(-1)  # extra: models with no surfaces (padding)
-        o.put(body + dummy * extra, 3)
+        nmodels, npad = (extra % 2, extra // 2) if mats else (extra, 0)
+        dummy = bytes(56) + u32(0) + u32(-1)  # extra models with no surfaces (padding)
+        o.put(body + dummy * nmodels, 3)
+        if mats:  # the material list: Nuketown's entries, then the new materials, then padding materials
+            mat_list["at"] = o.put(old_list + (u32(-1) + memory) * (mats["count"] + npad), 3)
+            mat_list["pad"] = npad
         o.align(3)
-        return extra
+        return nmodels
 
-    extra_models, _ = region("models", build_models, 4)
+    extra_models, _ = region("models", build_models, 64 if mats else 4)
     patch(0x274, model_n + extra_models)
+    if mats:
+        patch(0x298, BASE["mat_count"] + mats["count"] + mat_list["pad"])
     for k in range(6):
         patch(0x27C + 4 * k, w.f(0x2C4 + 4 * k))
 
@@ -262,7 +306,7 @@ def convert(m, h, data):
         key = base_surfs[96 * k + 0x40:96 * k + 0x48]
         count[key] = count.get(key, 0) + 1
     # plain quantized-world surfaces (flags 0x30: e.g. wqc/wood_burned); "wpc" materials expect another vertex format
-    common = max((k for k in count if k[7] == 0x30), key=count.get)
+    common = material or max((k for k in count if k[7] == 0x30), key=count.get)
     mat = ((struct.unpack(">I", common[0:4])[0] - 1) & 0x1FFFFFFF) + moved[0]
 
     # ---- shadow lists, (copied) light regions and visibility data, sorted surfaces, (copied) static model
@@ -280,15 +324,26 @@ def convert(m, h, data):
         out += struct.pack(">4f", *center, scale)
         out += b[0x00:0x0C] + u32(vo0) + b[0x10:0x1C] + u32(0)  # vertex offsets: vd0 bytes, second stream
         out += u32(0) + b[0x28:0x2C] + struct.pack(">HHI", n, tc, base_index)
-        out += u32(ref(mat)) + bytes([0, min(b[0x35], BASE["probes"] - 1),
+        mref = mat_list["at"] + 8 * (BASE["mat_count"] + mats["surf_map"][s]) if mats else mat
+        out += u32(ref(mref)) + bytes([0, min(b[0x35], BASE["probes"] - 1),
                                       min(b[0x36], BASE["primary_lights"] - 1)]) + common[7:8]
         out += b[0x38:0x50]
     if surf_n == static_n:
         out += bytes(96) * kstatic
     surface_bytes = bytes(out)
 
+    pieces = (mats["pieces"] + [p for k in range(mat_list["pad"]) for p in mats["pad"](k)]) if mats else []
+
     def build_tail(o, extra):
         nlist, ndummy = extra % 64, extra // 64
+        for piece in pieces:  # the new materials, loaded after Nuketown's (temp-block parts take no block 5 space)
+            if piece[0] == "temp":
+                o.b += piece[1]
+            else:
+                o.put(piece[1], piece[2])
+        if mats:  # the outdoor image, as it was
+            of0, of1, ospan = BASE["outdoor"]
+            o.copy(data[of0:of1], ospan)
         lights = bytearray(12 * BASE["primary_lights"])
         if nlist:  # padding: the first light's static model list (Nuketown's model 0, far away)
             struct.pack_into(">HHII", lights, 0, 0, nlist, 0, 0xFFFFFFFF)
@@ -308,6 +363,9 @@ def convert(m, h, data):
 
     # the last region also brings the whole asset's change to a multiple of 4096
     f0, f1, b0, b1 = BASE["tail"]
+    if mats:
+        b0 = BASE["mats_end"]  # the new materials start where Nuketown's last one ended
+        f0 = BASE["outdoor"][0]
     for extra in range(64 * 160):
         o = Out(b0 + moved[0])
         ndummy = build_tail(o, extra)
@@ -326,4 +384,9 @@ def convert(m, h, data):
     for off, v in ((0x370, total_static), (0x374, lit0), (0x378, lit1), (0x37C, dec0), (0x380, dec1),
                    (0x384, em0), (0x388, em1), (0x38C, em1), (0x390, em1), (0x398, (total_static + 127) // 128 * 128)):
         patch(off, v)
+    if mats and mats["pixels"]:  # the new images' pixels: in block 3 (stored at the file's end), after Nuketown's
+        px = b"".join(mats["pixels"])
+        block3_file = len(data) - struct.unpack_from(">I", data, 8 + 4 * 3)[0]
+        at = block3_file + BASE["b3_insert"]
+        edits.append((at, at, px, {3: (BASE["b3_insert"], len(px))}))
     return edits, patches, moved[0]

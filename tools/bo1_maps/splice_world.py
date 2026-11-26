@@ -12,6 +12,12 @@ import t6clip as T  # noqa: E402
 import zoneload as Z  # noqa: E402
 
 GAME, COL = 16, 13
+# Nacht's lightmap images in BO1's block 2 (from asset_trace.py of its world) and Nuketown's lightmap 0 in BO2's
+# block 3 (2048 x 3072 DXT5, 0x600000 bytes)
+NACHT_LM = {"secondary": 0x3F5000, "secondary_b": 0x5F5000}
+NUKED_LM0 = 0x16C000
+NUKED_LM_HEADER = 0x349C597  # Nuketown's lightmap 0 image header (non-streamed): the new images' template
+TEMPLATE_MATERIAL = 0x3DC4FCC  # Nuketown's wqc/wood_burned record: the new materials' template
 BO2_IMAGE = "work/dump_tu18/default_mp.image.bin"  # the decrypted TU18 program (the build writes it)
 
 
@@ -190,7 +196,30 @@ def main():
     if relocs and "--gfx" in sys.argv:  # the render world too (t6gfx.py); it comes before the game world
         import t6gfx
         gfx_h = [hh for i, t, hh in z5.assets if t == 18][-1]
-        gfx_edits, gfx_patches, mg = t6gfx.convert(m, gfx_h, open(bo2_zone, "rb").read())
+        base = open(bo2_zone, "rb").read()
+        mat = t6gfx.find_material(bo2_zone, BO2_IMAGE, opt["--material"], base) if "--material" in opt else None
+        mats = None
+        if "--materials" in sys.argv:  # Nacht's own color textures (t6mat.py)
+            import re
+            import t6mat
+            z2, images = t6mat.bo1_images(bo1_zone, bo1_image, 417)
+            m2 = z2.mem
+            gh2 = [hh for i, t, hh in z2.assets if t == 18][-1]
+            surf_n2 = m2.u32(gh2 + 0x10)
+            surfs2 = m2.u32(gh2 + 0x408)
+            surf_mats = [m2.u32(surfs2 + 80 * s + 0x30) for s in range(surf_n2)]
+            bo1 = open(bo1_zone, "rb").read()
+            block2 = bo1[len(bo1) - struct.unpack_from(">I", bo1, 8 + 4 * 2)[0]:]
+
+            def name_of(img):
+                raw = m2.read(m2.u32(img + 0x94), 64).split(b"\0")[0].decode("latin-1")
+                return re.sub(r"[^A-Za-z0-9_]", "_", raw) or "img"
+
+            mats = t6mat.build(m2, surf_mats, images, block2, base, TEMPLATE_MATERIAL,
+                               base[NUKED_LM_HEADER:NUKED_LM_HEADER + 0xD4], name_of, bo1)
+            print(f"materials: {mats['count']} new (one per Nacht color texture), "
+                  f"{sum(len(p) for p in mats['pixels']) // 1024} KB of pixels")
+        gfx_edits, gfx_patches, mg = t6gfx.convert(m, gfx_h, base, mat, mats)
         print(f"gfx_map: {len(gfx_edits)} regions, {mg:+#x} bytes in block 5")
     if relocs:
         g = fit_aligned(lambda pad, extra: gameworld(gb0["5"] + mg, gb1["5"] + mg, m, game_h, name, strings,
@@ -217,6 +246,20 @@ def main():
               f"{len(R.rebuild.dangling)} pointed into replaced data")
     else:
         new = d[:gf0] + bytes(g.out) + d[gf1:cf0] + bytes(c.out) + d[cf1:]
+    if gfx_edits:  # the lightmap: Nacht's light in Nuketown's lightmap 0 (same size, in the deferred block 3 at the end)
+        import t6lightmap as L
+        bo1 = open(bo1_zone, "rb").read()
+        tail5 = len(bo1) - struct.unpack_from(">I", bo1, 8 + 4 * 2)[0]  # BO1's block 2, stored last
+        light = L.bo1_light(bo1[tail5 + NACHT_LM["secondary"]:tail5 + NACHT_LM["secondary"] + 0x200000],
+                            bo1[tail5 + NACHT_LM["secondary_b"]:tail5 + NACHT_LM["secondary_b"] + 0x200000], 512, 1024)
+        pixels = L.build(light, 2048, 3072)
+        new = bytearray(new)
+        tail6 = len(new) - struct.unpack_from(">I", new, 8 + 4 * 3)[0]  # BO2's block 3, stored last
+        at = tail6 + NUKED_LM0
+        assert len(pixels) == 0x600000, hex(len(pixels))
+        new[at:at + len(pixels)] = pixels
+        new = bytes(new)
+        print("lightmap: Nacht's light written into lightmap 0")
     open(out, "wb").write(new)
     print("wrote", out, len(new), "bytes")
 
