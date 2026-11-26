@@ -124,6 +124,10 @@ Measured world sizes (MB; render world = data + vertex/image data; paths include
 * Collision (`t6clip.py`): BO2 groups planes … brushes into `ClipInfo`; dmaterial_t → ClipMaterial; cStaticModel
   0x50 → 0x54; CollisionPartition 20 → 16; cmodel_t gains `info`; brush verts must point into `ClipInfo.brushVerts`
   (a -1 pointer reads one vec3); some leaf brush lists stay inline. Entities go into its inline MapEnts.
+* Dynamic entities (clipMap 0xFC: originalDynEntCount, dynEntCount[4] u16; def lists 0x108/0x10C, 84 B each, right
+  after the box brush; run-time pose/client/server/collision lists 0x110..0x134): Nacht has none placed, but the
+  client pool needs spare slots (Nuketown: 60 + 256), which gibs fill at run time (the script builtin at
+  0x82223B90). With an empty pool the first gib (the ray gun's first hit) wrote through a null pointer.
 * Paths: pathnode_t 0x80 → 0x90, pathlink 12 → 16 (flags 0x28), node types 8/9/10 renumbered, BO2 streams nodeCount
   + 128 nodes, visibility n(n-1)/8 bytes; node script strings are renumbered into the zone's list (BO1 `autoNN`
   targetnames are absent: set to none).
@@ -161,8 +165,8 @@ visibility data / static model instances copied); with `--materials` also the ma
   draw range) pad the sorted list so the asset's change reaches a multiple of 4096. They carry a real material and no
   triangles: with a null material the renderer crashed in play (sub_828A72F0 reads material + 80 for each surface of
   a draw list; crash dumps: `dmp_stack.py` + `llvm-symbolizer` with `bo2zm.pdb`).
-* Open: a second in-play crash, a memset to guest 0x20 (thread F800002C, game code), seen since the first render
-  world build.
+* Crash dumps: `dmp_unwind.py` (x64 unwind with the modules' .pdata) gives a true host stack; each frame is a
+  recompiled guest function (`llvm-symbolizer` + `bo2zm.pdb`). A stack scan alone lists stale frames.
 
 ### Lightmaps (`t6lightmap.py`)
 

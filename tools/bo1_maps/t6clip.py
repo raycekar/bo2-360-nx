@@ -137,7 +137,11 @@ def write_clipmap(s, m, h, name, vis_pad=0, ents_text=None):
     hdr[0xB0:0xB0 + 0x1C] = bm[:0x1C]
     hdr[0xB0 + 0x1C:0xB0 + 0x20] = u32(0)  # info
     hdr[0xB0 + 0x20:0xB0 + 0x4C] = bm[0x1C:0x48]
-    # 0xFC..: originalDynEntCount, dynEntCount[4], lists, constraints, ropes: all 0; checksum copied
+    # 0xFC: originalDynEntCount, dynEntCount[4] (u16: client, -, server, -); 0x108/0x10C def lists (block 5);
+    # pose 0x110/0x114, client 0x118/0x11C, server 0x120/0x124, collision 0x128..0x134 lists (block 1, run time).
+    # No placed dynamic entities: a client pool of spare slots only. Constraints and ropes: none. Checksum copied.
+    hdr[0xFC:0x106] = struct.pack(">5H", 0, DYNENT_POOL, 0, 0, 0)
+    hset(0x108, -1), hset(0x110, -1), hset(0x118, -1), hset(0x128, -1)
     hset(0x148, c.f(0x148))
     s.put(bytes(hdr), block_data=False)  # the header goes to the temp block
 
@@ -257,6 +261,15 @@ def write_clipmap(s, m, h, name, vis_pad=0, ents_text=None):
     if nv and vp:
         s.align(3)
         s.put(m.read(vp, 12))  # BO2 reads one vec3 here
+    # dynamic entities (Load: 0x822BC658): no placed ones, but the client pool's spare slots, which the game fills at
+    # run time (zombie gibs, CreateDynEntAndLaunch). Without a pool the first gib wrote through a null pointer.
+    s.align(3)
+    s.put(DYNENT_SPARE * DYNENT_POOL)
+
+
+# DynEntityDef (84 bytes): a spare slot as Nuketown's 256 are (all zero but four 0x01FF words at 0x3C)
+DYNENT_SPARE = bytes(0x3C) + b"\x01\xff" * 4 + bytes(84 - 0x44)
+DYNENT_POOL = 256  # Nuketown: 60 placed + 256 spare client dynamic entities
 
 
 def write_comworld(s, m, h, name):
