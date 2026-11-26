@@ -22,7 +22,10 @@ FLAT_NORMAL_REF = 0xA01548B5  # Nuketown's reference to $identitynormalmap (imag
 # Nuketown's light grid coefficients (file position in the base zone, count; GfxWorld 0x264/0x268): 27 u16 each,
 # biased by 0x8000, 9 SH terms x rgb, DC first. Its samples are blue-green and sit where Nuketown's geometry was.
 NUKED_GRID_COEFFS = (0x3B194B6, 47900)
-COM_MAP = 14  # ComWorld asset type: Nuketown's primary lights (0xC4 B each: type, colour vec3 at +8)
+# Nuketown's occluders (GfxWorld 0x438 count, 0x43C array; file position in the base zone): 68 B each, flags, name[16],
+# 4 corner points. The renderer skips whatever is behind one, so in Nacht's rooms they hide walls by view angle.
+NUKED_OCCLUDERS = (0x45AC674, 13)
+COM_MAP = 14 # ComWorld asset type: Nuketown's primary lights (0xC4 B each: type, colour vec3 at +8)
 BO2_IMAGE = "work/dump_tu18/default_mp.image.bin"  # the decrypted TU18 program (the build writes it)
 
 
@@ -179,6 +182,21 @@ def fit_aligned(build, end, label, align=4096):
     raise SystemExit(f"{label}: no padding ends at {target:#x}")
 
 
+def no_occluders(new, base):
+    """Collapse each of Nuketown's occluders to a point far below the map (no area: hides nothing); the array keeps its
+    size, so nothing moves."""
+    pos, count = NUKED_OCCLUDERS
+    old = base[pos:pos + 68 * count]
+    at = new.find(old)
+    assert at >= 0 and new.find(old, at + 1) < 0, "occluders not found once in the new zone"
+    new = bytearray(new)
+    for k in range(count):
+        for j in range(4):
+            struct.pack_into(">3f", new, at + 68 * k + 20 + 12 * j, 0.0, 0.0, -30000.0)
+    print(f"occluders: {count} collapsed")
+    return bytes(new)
+
+
 def neutral_lighting(new, base, fp, level):
     """Until Nacht's own light grid and lights are converted: every light grid sample becomes the same grey (level x
     Nuketown's median brightness, no direction) and Nuketown's primary lights (the sun included) go dark."""
@@ -285,6 +303,8 @@ def main():
               f"{len(R.rebuild.dangling)} pointed into replaced data")
     else:
         new = d[:gf0] + bytes(g.out) + d[gf1:cf0] + bytes(c.out) + d[cf1:]
+    if gfx_edits:
+        new = no_occluders(new, d)
     if gfx_edits and "--keep-lighting" not in sys.argv:
         new = neutral_lighting(new, d, fp, float(opt.get("--grid-level", "0.3")))
     if gfx_edits:  # the lightmap: Nacht's light in Nuketown's lightmap 0 (same size, in the deferred block 3 at the end)

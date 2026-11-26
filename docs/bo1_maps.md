@@ -69,7 +69,8 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
    `zmcore_basicwoodbarrier` and its 12 board animations (then `nacht_ents.py --windows`).
-3. **Clean-ups.** Nuketown's occluders, outdoor bounds and static models; Nacht's 20 primary lights (com_map);
+3. **Clean-ups.** Nuketown's outdoor bounds and static models (its 13 occluders, GfxWorld 0x438/0x43C, 68 B: flags,
+   name[16], 4 points, hid Nacht's walls by view angle: `splice_world.no_occluders` collapses them to a point); Nacht's 20 primary lights (com_map);
    sounds and music; pin and start-location images; globe order and the early-globe pin race (rebuild pins after
    `ReparseMapsTable`); the diagnostic Lua wrappers.
 4. **Install path.** Fold the pipeline into `tools/install_bo1_maps.py`.
