@@ -190,10 +190,14 @@ visibility data / static model instances copied); with `--materials` also the ma
   (absolute; -1 absent), 2 bytes, count × u16 sizes in sectors (low 15 bits; top bit a flag). BO1 looks a part up as
   `table[id & 0xFFFFFF]` (sub_8231D030 / sub_8231D0A0; pack objects at 0x83277E88, opened by sub_8231E858).
 * Part: u32 W, zeros to W; at W: u32 0, u32 compressed size, u32 uncompressed size, compressed data to the part's
-  end. **Compression not identified yet**: zlib/raw deflate fail ("invalid distance code"), BO2's XMem LZX framing
-  fails; LZX run from 4 bytes before the header parses an uncompressed block of real DXT blocks, so likely an LZX
-  variant. Next: follow the read's completion (callback 0x82588BE0 → sub_825A5678 → XDK code 0x825BCA48 /
-  0x825BDEB0) to the decompressor.
+  end. **Compression not identified yet**: not zlib/deflate at any offset (0 bytes out), not BO2's XMem LZX
+  framing, not plain LZX (an LZX parse from W+5 copies DXT-looking bytes but renders as noise). Where the data goes:
+  read completion callback 0x82588BE0 (cache flush) → sub_825A5678 → sub_825BDEB0 queues {buffer, size, …} in a
+  2048-entry queue at 0x84033B60; its consumer sub_825BE020 pops entries and calls only D3D-area code (0x8249xxxx,
+  0x824AEA50/0x824AF008) with GPU-packet-like constants (0x4B021A01, 0x4B00xxxx): **likely a GPU-side decode**.
+  The fastfile worker (`DB_DecompressIOStreamWorker`, thread entry 0x821D9A88) uses zlib 1.2.3 raw inflate
+  (inflateInit2_ 0x823AFF58 with -15, inflate 0x823B01E0) — not used for image parts. Next: trace sub_825BE020's
+  D3D calls (which shader / resolve it sets up) or look for the decode shader in BO1's code zones.
 * Streamed BO1 image header: size 0 and 1×1 at 0x38/0x3C (placeholders); from 0x50 a u32, then per mip part 12 B:
   u32 (cumulative uncompressed offset << 4 | level), u16 w, u16 h, u32 part id (top byte = pack type: Nacht's terrain
   = 3, found in images.pak; plaster = 0, not found yet in images / images_low / img_dlc1 / img_dlc5). Each part is one
