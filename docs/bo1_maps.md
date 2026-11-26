@@ -54,7 +54,16 @@ project's own, and the pack's zone is encrypted with the key rebuilt from your d
   found in the 360 zone. The 360 layout differs.
 * A run of 2,782 plane-like 20-byte records (unit normal, dist, type ≤ 3) sits at 0x12FE372. Its second byte after
   the type reads 8, so it may not be `cplane_s` as on the PC. Unconfirmed.
-* **Next step:** take the exact 360 layout from BO1's own loader. In the BO1 TU11 image (`default.image.bin`), find
+* **Done: `tools/bo1_maps/t5load.py` loads BO1 zones by running BO1's own loader code** (TU11 `default.image.bin`)
+  in a small PowerPC interpreter. The stream API is reimplemented: `Load_Stream` 0x821F0668, alloc 0x821F05F8,
+  push/pop 0x821F04F0/0x821F0578, offset→pointer 0x821F0790, `DB_LinkXAssetEntry` 0x821EC8B0 (keeps a copy of the
+  header), file reads 0x821D9FF0/0x821D9EB0/0x821DA178. The root is driven like `DB_LoadXFileInternal`
+  (0x821DA420): header, XAssetList, script strings (0x821DAB88), then `Load_XAsset` (0x821EB078) per asset. Nacht's
+  first 419 assets, through col_map_sp, load in about 12 s. clipMap: 2,782 planes, 916 static models,
+  216 materials, 4,759 brush sides, 918 nodes, 1,089 leafs, 12,461 verts. BO1's `Load_clipMap_t` is 0x821E5B28
+  (0x14C bytes). BO2's is 0x822BD3C8 (0x14C bytes, with `ClipInfo` inline at +8, loaded by 0x822BCB08; then
+  pInfo +0x50, static models +0x54/+0x58, nodes +0x5C/+0x60, leafs +0x64/+0x68); `Load_Stream` 0x822CC1D8.
+* Old note: take the exact 360 layout from BO1's own loader. In the BO1 TU11 image (`default.image.bin`), find
   `Load_clipMap_t` / `Load_clipMap_tPtr` (the asset load switch is indexed by type; col_map_sp is type 12 in the 360
   enum). Read the field order and sizes from its stream reads, then write a T5 clipMap reader that starts at a
   found header and checks itself with the counts.
