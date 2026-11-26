@@ -18,6 +18,7 @@ NACHT_LM = {"secondary": 0x3F5000, "secondary_b": 0x5F5000}
 NUKED_LM0 = 0x16C000
 NUKED_LM_HEADER = 0x349C597  # Nuketown's lightmap 0 image header (non-streamed): the new images' template
 TEMPLATE_MATERIAL = 0x3DC4FCC  # Nuketown's wqc/wood_burned record: the new materials' template
+FLAT_NORMAL_REF = 0xA01548B5  # Nuketown's reference to $identitynormalmap (image_refs.py): the new materials' normal map
 BO2_IMAGE = "work/dump_tu18/default_mp.image.bin"  # the decrypted TU18 program (the build writes it)
 
 
@@ -222,7 +223,8 @@ def main():
                 kind, path = spec.split("=", 1)
                 packs[int(kind)] = pak2.Pak(*path.split("::"))
             mats = t6mat.build(m2, surf_mats, images, block2, base, TEMPLATE_MATERIAL,
-                               base[NUKED_LM_HEADER:NUKED_LM_HEADER + 0xD4], name_of, bo1, packs)
+                               base[NUKED_LM_HEADER:NUKED_LM_HEADER + 0xD4], name_of, bo1, packs,
+                               None if "--keep-normal" in sys.argv else FLAT_NORMAL_REF)
             print(f"materials: {mats['count']} new (one per Nacht color texture), "
                   f"{sum(len(p) for p in mats['pixels']) // 1024} KB of pixels")
         gfx_edits, gfx_patches, mg = t6gfx.convert(m, gfx_h, base, mat, mats)
@@ -258,6 +260,11 @@ def main():
         tail5 = len(bo1) - struct.unpack_from(">I", bo1, 8 + 4 * 2)[0]  # BO1's block 2, stored last
         light = L.bo1_light(bo1[tail5 + NACHT_LM["secondary"]:tail5 + NACHT_LM["secondary"] + 0x200000],
                             bo1[tail5 + NACHT_LM["secondary_b"]:tail5 + NACHT_LM["secondary_b"] + 0x200000], 512, 1024)
+        if "--lm-flat" in sys.argv:  # diagnostic: plain white light everywhere (judges the textures alone)
+            light = light * 0 + 1.0
+        # BO2 lights a surface with ambient + directional; ours is ambient only, so it is scaled up to about
+        # Nuketown's level (its ambient stores ~2.5x ours, and its directional tile as much again)
+        light = light * float(opt.get("--lm-gain", "3"))
         pixels = L.build(light, 2048, 3072)
         new = bytearray(new)
         tail6 = len(new) - struct.unpack_from(">I", new, 8 + 4 * 3)[0]  # BO2's block 3, stored last

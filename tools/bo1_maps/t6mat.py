@@ -116,10 +116,18 @@ def image_header(bo1_hdr, image_template):
     return bytes(h)
 
 
-def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template, name_of, bo1_file=b"", packs=None):
+def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template, name_of, bo1_file=b"", packs=None,
+          normal_ref=None):
     """Returns {pieces, pixels (padded to 4096), surf_map (surface -> new material index), count, pad(k)}.
-    surfs_mats: BO1 material address per surface; packs: {pack type: pak2.Pak} for streamed images."""
+    surfs_mats: BO1 material address per surface; packs: {pack type: pak2.Pak} for streamed images; normal_ref: an
+    image reference (stored value) for the normal map, e.g. the base zone's $identitynormalmap."""
     hdr, textures, consts, bits = template(data, template_pos)
+    if normal_ref is not None:
+        textures = bytearray(textures)
+        for e in range(len(textures) // 16):
+            if textures[16 * e + 7] == 5:
+                struct.pack_into(">I", textures, 16 * e + 12, normal_ref)
+        textures = bytes(textures)
     unique, index_of = [], {}
     surf_map = []
     stream = {}

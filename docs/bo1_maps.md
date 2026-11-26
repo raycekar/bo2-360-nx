@@ -62,9 +62,12 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
 
 1. **Textures (in progress).** Done: BO1's image packs decode (LZO1X, below) and `splice_world.py --materials
    --paks ...` gives each of Nacht's 72 color textures its own material with its pixels (largest mip only).
-   Not yet seen in game. Next: check it in game; then judge the lightmap's colors and brightness with real
-   textures (the R/B swap in `t6lightmap.build` is unverified); then normal maps, mips, light grid, reflection
-   probes and sky.
+   In game: textures show. The template's own normal map made every surface sparkle (fine white dots); the new
+   materials now use the base zone's `$identitynormalmap` (`--keep-normal` keeps the template's). Still wrong:
+   the whole view, the gun included, is dark and green. A white lightmap (`--lm-flat`) or 3x the light
+   (`--lm-gain`, default 3) barely changes it, and the gun isn't lit by the lightmap, so the cause is probably
+   global: the light grid and reflection probes are still Nuketown's. Next: convert the light grid and probes;
+   then Nacht's normal maps, mips, sky.
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
    `zmcore_basicwoodbarrier` and its 12 board animations (then `nacht_ents.py --windows`).
