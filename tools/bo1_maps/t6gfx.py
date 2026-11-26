@@ -9,6 +9,7 @@ Alignment: data between edited regions must keep its alignment, so each region's
 128 (or 16 where noted), and the whole asset's a multiple of 4096 (sound banks later in the zone align to 2048).
 """
 import math
+import os
 import struct
 
 # Nuketown's render world (zm_nuked.ff asset 1040, from asset_trace.py): absolute file positions in the decoded zone
@@ -57,7 +58,7 @@ class Out:
     """One region's file bytes and the block 5 position the loader will have."""
 
     def __init__(self, pos):
-        self.b, self.pos = bytearray(), pos
+        self.b, self.pos, self.log = bytearray(), pos, []
 
     def align(self, a):
         self.pos = (self.pos + a) & ~a
@@ -67,6 +68,7 @@ class Out:
         start = self.pos
         self.b += data
         self.pos += len(data)
+        self.log.append((start, len(data)))
         return start
 
     def copy(self, data, span):  # base data copied as is: its file bytes, and the block 5 span it had
@@ -324,13 +326,18 @@ def convert(m, h, data, material=None, mats=None):
         if s == static_n:
             out += bytes(96) * kstatic  # the dummy static surfaces
         center, scale, vo0, n, base_index, tc = surf_info[s]
+        kind = mats["surf_kind"][s] if mats else "opaque"
+        if kind == "hidden":  # sky and shadow-only surfaces: no triangles (BO2 draws its sky with the sky model)
+            tc = 0
         out += struct.pack(">4f", *center, scale)
         out += b[0x00:0x0C] + u32(vo0) + b[0x10:0x1C] + u32(0)  # vertex offsets: vd0 bytes, second stream
         out += u32(0) + b[0x28:0x2C] + struct.pack(">HHI", n, tc, base_index)
         mref = mat_list["at"] + 8 * (BASE["mat_count"] + mats["surf_map"][s]) if mats else mat
         light = min(b[0x36], BASE["primary_lights"] - 1) if SURFACE_LIGHTS else 0
         probe = min(b[0x35], BASE["probes"] - 1) if SURFACE_PROBES else 0
-        out += u32(ref(mref)) + bytes([0, probe, light]) + common[7:8]
+        # flags: high nibble 3 for opaque world surfaces, 2 for blend layers and decals (as Nuketown's)
+        flags = (common[7] & 0x0F) | (0x20 if kind in ("blend", "decal") else common[7] & 0xF0)
+        out += u32(ref(mref)) + bytes([0, probe, light, flags])
         out += b[0x38:0x50]
     if surf_n == static_n:
         out += bytes(96) * kstatic
@@ -377,6 +384,9 @@ def convert(m, h, data, material=None, mats=None):
             continue
         delta = o.pos - b1 - moved[0]
         if (moved[0] + delta) % 4096 == 0:
+            if os.environ.get("T6GFX_TAIL_LOG"):  # debugging: the planned block 5 position of each piece
+                with open(os.environ["T6GFX_TAIL_LOG"], "w") as f:
+                    f.writelines(f"{s:#x} {n:#x}\n" for s, n in o.log)
             edits.append((f0, f1, bytes(o.b), {BLOCK: (b1, delta)}))
             moved[0] += delta
             break

@@ -49,6 +49,25 @@ def bo1_images(zone, image, stop):
     return z, out
 
 
+BLEND_SORTS = (0x0A, 0x0B, 0x0D, 0x2B)  # BO1 sort keys (material + 9) of layers blended over the surface below
+DECAL_SORT = 0x0C
+SKY_SORT = 0x05
+
+
+def surface_kind(m, mat):
+    """How a BO1 world material draws: 'opaque', 'blend' (a layer over coplanar geometry), 'decal', or 'hidden'
+    (sky surfaces, which BO2 draws with its sky model, and shadow-only caulk)."""
+    if not mat:
+        return "opaque"
+    name = m.read(m.u32(mat), 96).split(b"\0")[0].decode("latin-1")
+    sort = m.read(mat + 9, 1)[0]
+    if sort == SKY_SORT or name.endswith(("/shadowcaster", "/caulk_shadow")):
+        return "hidden"
+    if sort == DECAL_SORT:
+        return "decal"
+    return "blend" if sort in BLEND_SORTS else "opaque"
+
+
 def color_image(m, mat):
     """A BO1 material's primary color map image (semantic 2, 'c' 'p'), or None."""
     count = m.read(mat, 0x80)[0x67]
@@ -117,21 +136,28 @@ def image_header(bo1_hdr, image_template):
 
 
 def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template, name_of, bo1_file=b"", packs=None,
-          normal_ref=None):
-    """Returns {pieces, pixels (padded to 4096), surf_map (surface -> new material index), count, pad(k)}.
+          normal_ref=None, kind_templates=None):
+    """Returns {pieces, pixels (padded to 4096), surf_map (surface -> new material index), surf_kind, count, pad(k)}.
     surfs_mats: BO1 material address per surface; packs: {pack type: pak2.Pak} for streamed images; normal_ref: an
-    image reference (stored value) for the normal map, e.g. the base zone's $identitynormalmap."""
-    hdr, textures, consts, bits = template(data, template_pos)
-    if normal_ref is not None:
-        textures = bytearray(textures)
-        for e in range(len(textures) // 16):
-            if textures[16 * e + 7] == 5:
-                struct.pack_into(">I", textures, 16 * e + 12, normal_ref)
-        textures = bytes(textures)
+    image reference (stored value) for the normal map, e.g. the base zone's $identitynormalmap; kind_templates:
+    {'blend' | 'decal': template record position} (surface_kind; without one a kind uses template_pos)."""
+    tmpl = {}
+    for kind, pos in dict(kind_templates or {}, opaque=template_pos).items():
+        hdr, textures, consts, bits = template(data, pos)
+        if normal_ref is not None:
+            textures = bytearray(textures)
+            for e in range(len(textures) // 16):
+                if textures[16 * e + 7] == 5:
+                    struct.pack_into(">I", textures, 16 * e + 12, normal_ref)
+            textures = bytes(textures)
+        tmpl[kind] = (hdr, textures, consts, bits)
     unique, index_of = [], {}
-    surf_map = []
+    surf_map, surf_kind = [], []
     stream = {}
     for mat in surfs_mats:
+        kind = surface_kind(m, mat) if kind_templates else "opaque"
+        surf_kind.append(kind)
+        kind = kind if kind in tmpl else "opaque"
         img = color_image(m, mat) if mat else None
         # streamed: no pixels in the zone (a streamed header's size at 0x38 is 0; its key can match an inline image's)
         if img is not None and (image_key(m, img) not in images or m.u32(img + 0x38) == 0):
@@ -139,13 +165,14 @@ def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template,
                 stream[img] = streamed(m, img, packs or {})
             if stream[img] is None:
                 img = None
-        if img not in index_of:
-            index_of[img] = len(unique)
-            unique.append(img)
-        surf_map.append(index_of[img])
+        if (img, kind) not in index_of:
+            index_of[img, kind] = len(unique)
+            unique.append((img, kind))
+        surf_map.append(index_of[img, kind])
     # pieces: ("temp", bytes) in the temp block (no block 5 space), ("b5", bytes, align) in block 5
     pieces, pixels = [], []
-    for k, img in enumerate(unique):
+    for k, (img, kind) in enumerate(unique):
+        hdr, textures, consts, bits = tmpl[kind]
         h = bytearray(hdr)
         h[0x00:0x04] = b"\xff\xff\xff\xff"
         tex = bytearray(textures)
@@ -156,7 +183,7 @@ def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template,
                     tex[16 * e + 12:16 * e + 16] = b"\xff\xff\xff\xff"
                     inline = True
         pieces.append(("temp", bytes(h)))
-        pieces.append(("b5", f"nacht/{name_of(img) if img else 'none'}_{k}".encode() + b"\0", 0))
+        pieces.append(("b5", f"nacht/{name_of(img) if img else 'none'}_{kind[0]}{k}".encode() + b"\0", 0))
         pieces.append(("b5", bytes(tex), 3))
         if inline:
             if img in stream:
@@ -170,13 +197,15 @@ def build(m, surfs_mats, images, bo1_block2, data, template_pos, image_template,
             pixels.append(px + bytes((-len(px)) % 4096))
         if consts:
             pieces.append(("b5", consts, 15))
-        pieces.append(("b5", bits, 3))
-    def pad(k):  # a padding material: the template as it is (its own images), under a new name
+        pieces.append(("b5", bits, 7))  # the loader aligns stateBits to 8 (asset_trace of the built zone)
+    def pad(k):  # a padding material: the opaque template as it is (its own images), under a new name
+        hdr, textures, consts, bits = tmpl["opaque"]
         h = bytearray(hdr)
         h[0x00:0x04] = b"\xff\xff\xff\xff"
         out = [("temp", bytes(h)), ("b5", f"nacht/pad_{k}".encode() + b"\0", 0), ("b5", bytes(textures), 3)]
         if consts:
             out.append(("b5", consts, 15))
-        return out + [("b5", bits, 3)]
+        return out + [("b5", bits, 7)]
 
-    return {"pieces": pieces, "pixels": pixels, "surf_map": surf_map, "count": len(unique), "pad": pad}
+    return {"pieces": pieces, "pixels": pixels, "surf_map": surf_map, "surf_kind": surf_kind, "count": len(unique),
+            "pad": pad}

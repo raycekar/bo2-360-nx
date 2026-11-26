@@ -18,6 +18,8 @@ NACHT_LM = {"secondary": 0x3F5000, "secondary_b": 0x5F5000}
 NUKED_LM0 = 0x16C000
 NUKED_LM_HEADER = 0x349C597  # Nuketown's lightmap 0 image header (non-streamed): the new images' template
 TEMPLATE_MATERIAL = 0x3DC4FCC  # Nuketown's wqc/wood_burned record: the new materials' template
+# for BO1 blend layers and decals (t6mat.surface_kind): wqc/wood_burned_blend, wqc/zm_nacht_dec_burntstain_01
+KIND_TEMPLATES = {"blend": 0x3DC508C, "decal": 0x3DC523A}
 FLAT_NORMAL_REF = 0xA01548B5  # Nuketown's reference to $identitynormalmap (image_refs.py): the new materials' normal map
 # Nuketown's light grid coefficients (file position in the base zone, count; GfxWorld 0x264/0x268): 27 u16 each,
 # biased by 0x8000, 9 SH terms x rgb, DC first. Its samples are blue-green and sit where Nuketown's geometry was.
@@ -273,8 +275,13 @@ def main():
                 packs[int(kind)] = pak2.Pak(*path.split("::"))
             mats = t6mat.build(m2, surf_mats, images, block2, base, TEMPLATE_MATERIAL,
                                base[NUKED_LM_HEADER:NUKED_LM_HEADER + 0xD4], name_of, bo1, packs,
-                               None if "--keep-normal" in sys.argv else FLAT_NORMAL_REF)
-            print(f"materials: {mats['count']} new (one per Nacht color texture), "
+                               None if "--keep-normal" in sys.argv else FLAT_NORMAL_REF,
+                               None if "--all-opaque" in sys.argv else
+                               {k: v for k, v in KIND_TEMPLATES.items()
+                                if k in opt.get("--kinds", ",".join(KIND_TEMPLATES)).split(",")})
+            import collections
+            print("surface kinds:", dict(collections.Counter(mats["surf_kind"])))
+            print(f"materials: {mats['count']} new (one per Nacht color texture and kind), "
                   f"{sum(len(p) for p in mats['pixels']) // 1024} KB of pixels")
         gfx_edits, gfx_patches, mg = t6gfx.convert(m, gfx_h, base, mat, mats)
         print(f"gfx_map: {len(gfx_edits)} regions, {mg:+#x} bytes in block 5")

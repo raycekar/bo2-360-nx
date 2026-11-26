@@ -65,6 +65,7 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
    In game: textures show. The template's own normal map made every surface sparkle (fine white dots); the new
    materials now use the base zone's `$identitynormalmap` (`--keep-normal` keeps the template's). The dark green
    look came from Nuketown's lighting (Lighting, below); with it neutralised the map shows its own warm light.
+   Decals and blend layers use BO2 decal/blend templates; sky and shadow-only surfaces are hidden (Surface kinds).
    Next (optional polish): Nacht's own light grid, lights and probe cubemaps; then Nacht's normal maps, mips, sky.
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
@@ -192,6 +193,17 @@ visibility data / static model instances copied); with `--materials` also the ma
 * For now: every grid sample is the same grey (`--grid-level`, default 0.3 x Nuketown's median), Nuketown's primary
   lights (sun included) are dark, surfaces use light 0 and surfaces and cells probe 0 (`--surface-lights` /
   `--surface-probes` keep BO1's indices; `--keep-lighting` skips the grid and lights). Lightmap gain 3 fits.
+
+### Surface kinds (`t6mat.surface_kind`)
+
+* BO1 material sort key (byte at +9): 4 opaque, 0x0C decals (chalk, stains, fences, papers), 0x0A/0x0B/0x0D/0x2B
+  blend layers drawn over coplanar geometry, 5 sky, 0x11 water. Drawn as opaque world surfaces, blend layers and
+  decals z-fight with the surface below (flicker) and sky surfaces show the sky texture as a wall.
+* Now: decals clone `wqc/zm_nacht_dec_burntstain_01`, blend layers `wqc/wood_burned_blend` (Nuketown's records), and
+  their surfaces get flags 0x2X (Nuketown's decal/blend surfaces; opaque 0x3X, low nibble kept); sky,
+  `shadowcaster` and `caulk_shadow` surfaces get no triangles (BO2 draws the sky with its sky model). Nacht: 1,612
+  opaque, 181 blend, 89 decal, 29 hidden. `--all-opaque` or `--kinds blend,decal` for comparisons.
+* Loader alignment found with `asset_trace.py` + `T6GFX_TAIL_LOG`: material stateBits align to 8.
 
 ### Materials (`t6mat.py`)
 

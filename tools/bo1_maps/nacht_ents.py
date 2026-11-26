@@ -158,10 +158,14 @@ def main():
                         "angles": shown.get("angles", "0 0 0")})
         elif c == "script_origin" and t == "chest_origin":
             box = next(n for n in nuked if n.get("script_noteworthy") == "start_chest1_zbarrier")
+            # BO1's chest_origin faces 90 degrees off its box model; BO2's box (as in Nuketown) takes the model's yaw
+            # for both the zbarrier and the struct
+            model = by_target.get(e.get("target", ""), [e])[0]
+            angles = model.get("angles", e["angles"])
             out.append({"classname": "script_struct", "targetname": "treasure_chest_use",
                         "script_noteworthy": "start_chest", "zombie_cost": "950", "origin": e["origin"],
-                        "angles": e["angles"]})
-            out.append(dict(box, script_noteworthy="start_chest_zbarrier", origin=e["origin"], angles=e["angles"]))
+                        "angles": angles})
+            out.append(dict(box, script_noteworthy="start_chest_zbarrier", origin=e["origin"], angles=angles))
 
     # one respawn point per zone; players come back at the start room's spawn structs
     start = next(e for e in nacht if e["classname"] == "info_player_start")
