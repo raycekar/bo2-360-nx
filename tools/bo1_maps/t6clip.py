@@ -64,14 +64,14 @@ def load_t5_clipmap(zone, image):
     import contextlib
     import io
     z = Z.Zone(zone, image, "t5")
-    types = []
     with contextlib.redirect_stdout(io.StringIO()):
         z.run()  # the whole zone: the clipMap is wherever it is
     h = [h for i, t, h in z.assets if t == 12][-1]
+    load_t5_clipmap.zone = z
     return z.mem, h
 
 
-def convert(source, name):
+def open_source(source, name):
     """source: (memory, header) from load_t5_clipmap, or a pickle {"t5": (pages, header)} from earlier runs."""
     if isinstance(source, str):
         d = pickle.load(open(source, "rb"))
@@ -79,6 +79,10 @@ def convert(source, name):
         m.pages, h = d["t5"]
     else:
         m, h = source
+    return m, h, name
+
+
+def write_clipmap(s, m, h, name):
     c = T5Clip(m, h)
     planes_n, planes_p = c.f(0x08), c.f(0x0C)
     mats_n = c.f(0x18)
@@ -89,12 +93,6 @@ def convert(source, name):
     parts_n, aabb_n, cmodels_n = c.f(0x7C), c.f(0x84), c.f(0x8C)
     brushes_n = c.f(0x94) >> 16
     clusters, cluster_bytes = c.f(0x9C), c.f(0xA0)
-
-    s = Stream()
-    # ---- the zone root: XAssetList {stringList {0, 0}, depends {0, 0}, assetCount 1, assets -1}
-    s.put(struct.pack(">6i", 0, 0, 0, 0, 1, -1), block_data=False)
-    s.align(3)
-    s.put(struct.pack(">ii", COL_MAP_MP, -1))  # XAsset[1] in block 5
     # ---- clipMap_t header (block 0, temp): pointers -1 where data follows, offsets/0 elsewhere
     hdr = bytearray(0x14C)
 
@@ -252,15 +250,72 @@ def convert(source, name):
     if nv and vp:
         s.align(3)
         s.put(m.read(vp, 12))  # BO2 reads one vec3 here
+
+
+def write_comworld(s, m, h, name):
+    """BO1 ComWorld (360: name, isInUse, primaryLightCount, primaryLights, then water/burnable data that BO2 dropped)
+    as BO2's (0x10: name, isInUse, count, lights; Load_ComWorld 0x822B4BD0). ComPrimaryLight: BO1 0xDC bytes, BO2 0xC4
+    (lights 0x822B4B48): the same up to mipDistance (0x48); BO2 adds dAttenuation and roundness, drops specularColor
+    and attenuation; diffuse, falloff, angle, aAbB and the cookie controls follow; then defName (a string)."""
+    n, lp = m.u32(h + 8), m.u32(h + 12)
+    s.put(struct.pack(">iiIi", -1, 0, n, -1 if n else 0), block_data=False)
+    s.align(0)
+    s.put(name.encode() + b"\0")
+    if not n:
+        return
+    s.align(3)
+    lights, names = bytearray(), []
+    for i in range(n):
+        t5 = m.read(lp + 0xDC * i, 0xDC)
+        t6 = bytearray(0xC4)
+        t6[0:6] = t5[0:6]  # type, canUseShadowMap, exponent, priority, cullDist
+        t6[8:0x48] = t5[8:0x48]  # color, dir, origin, radius, cone, limits, mipDistance
+        t6[0x48:0x4C] = struct.pack(">f", 1.0)  # dAttenuation
+        t6[0x50:0x60] = t5[0x48:0x58]  # diffuseColor
+        t6[0x60:0x70] = t5[0x78:0x88]  # falloff
+        t6[0x70:0x80] = t5[0x88:0x98]  # angle
+        t6[0x80:0x90] = t5[0x98:0xA8]  # aAbB
+        t6[0x90:0xC0] = t5[0xA8:0xD8]  # cookieControl0..2
+        dn = m.u32(lp + 0xDC * i + 0xD8)
+        t6[0xC0:0xC4] = u32(-1 if dn else 0)
+        names.append(m.read(dn, 64).split(b"\0")[0] if dn else None)
+        lights += t6
+    s.put(bytes(lights))
+    for nm in names:
+        if nm is not None:
+            s.align(0)
+            s.put(nm + b"\0")
+
+
+def write_zone(assets):
+    """assets: [(type, writer(stream))]. Returns the zone (XFile header + body), as zoneload.py --game t6 reads it."""
+    s = Stream()
+    s.put(struct.pack(">6i", 0, 0, 0, 0, len(assets), -1), block_data=False)
+    s.align(3)
+    s.put(b"".join(struct.pack(">ii", t, -1) for t, _ in assets))
+    for _, w in assets:
+        w(s)
     convert.log = s.log
     body = bytes(s.out)
     virtual = (s.pos + 0xFFFF) & ~0xFFF
     return struct.pack(">II8I", len(body), 0, TEMP_BLOCK, 0, 0, 0, 0, virtual, 0, 0) + body
 
 
+def convert(source, name, z5=None):
+    m, h, name = open_source(source, name)
+    assets = []
+    if z5 is not None:
+        com = [hh for i, t, hh in z5.assets if t == 14]
+        if com:
+            assets.append((14, lambda s: write_comworld(s, m, com[-1], name)))
+    assets.append((COL_MAP_MP, lambda s: write_clipmap(s, m, h, name)))
+    return write_zone(assets)
+
+
 def main():
     name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else "maps/mp/zm_nacht.d3dbsp"
-    z = convert(load_t5_clipmap(sys.argv[1], sys.argv[2]), name)
+    source = load_t5_clipmap(sys.argv[1], sys.argv[2])
+    z = convert(source, name, load_t5_clipmap.zone)
     open(sys.argv[3], "wb").write(z)
     print("wrote", sys.argv[3], len(z), "bytes")
 
