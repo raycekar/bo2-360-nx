@@ -203,3 +203,6 @@ visibility data / static model instances copied); with `--materials` also the ma
 * `t6mat.streamed` takes the largest part as a one-level inline image: max mip 0, no mip address, size/w/h/levels
   at 0x38, pixel pointer -1. A streamed header's key can match an inline image's, so size 0 at 0x38 means streamed
   (an image with no pixels makes the loader align block 5 to 4096, which breaks the relocation).
+* Open: parts under 128 pixels on a side (trims, chalk: 512×32, 32×512, 256×32, …) hold fewer bytes than a tiled
+  surface of that size needs (512×32 DXT1: 0x2000 stored, 0x6800 addressed), so their layout is something else;
+  they're padded to the full tiled size and will look wrong until that's decoded.

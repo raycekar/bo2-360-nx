@@ -92,6 +92,11 @@ def streamed(m, img, packs):
     px = packs[pid >> 24].pixels(pid & 0xFFFFFF)
     if px is None:
         return None
+    # a tiled surface spans whole 32 x 32 block tiles; parts under 128 pixels on a side are stored smaller (layout not
+    # known yet): pad so the GPU never reads past this image
+    bpb = 8 if struct.unpack_from("<I", hdr, 0x20)[0] & 0x3F in (0x12, 0x52) else 16
+    tiled = ((w // 4 + 31) & ~31) * ((h // 4 + 31) & ~31) * bpb
+    px = px + bytes(max(0, tiled - len(px)))
     # fetch constant (0x1C, six little-endian words): one level, no mip address, no packed mips
     dw4 = struct.unpack_from("<I", hdr, 0x2C)[0] & ~(0xF << 6)
     struct.pack_into("<I", hdr, 0x2C, dw4)

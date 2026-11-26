@@ -1,9 +1,10 @@
 """BO1 (T5) Xbox 360 image packs ("pak2": images.pak, images_low.pak, img_dlcN.pak), read-only.
 
-Layout (big endian): "pak2", u32 timestamp, u32 ?, u32 count, u32 sector size (0x800), u32 data start; at 0x18
-count u32 start sectors (absolute; -1 absent), then 2 bytes, then count u16 sizes in sectors (low 15 bits; the top
-bit is a flag). The game looks a part up as table[id & 0xFFFFFF] (BO1 TU11 sub_8231D030 / sub_8231D0A0); the id's top
-byte picks the pack. A pack can be read from a file or from inside a disc image (xiso).
+Layout (big endian): "pak2", u32 timestamp, u32 ?, u32 count, u32 sector size (0x800), u32 data start, u32 ?; at
+0x1C count u32 start sectors (absolute; -1 absent), then count u16 sizes in sectors (low 15 bits; top bit set =
+compressed with LZO1X). The game looks a part up as table[id & 0xFFFFFF] (BO1 TU11 sub_8231D030); the id's top byte
+is the pack type (0 images, 1 images_low, others from the map's _load zone, e.g. 3 = img_dlc1 for Nacht). A pack can
+be read from a file or from inside a disc image (xiso).
 """
 import os
 import struct
