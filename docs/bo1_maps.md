@@ -65,8 +65,7 @@ then encode both zones (signed layout) into the pack. Scripts are decompiled fro
    In game: textures show. The template's own normal map made every surface sparkle (fine white dots); the new
    materials now use the base zone's `$identitynormalmap` (`--keep-normal` keeps the template's). The dark green
    look came from Nuketown's lighting (Lighting, below); with it neutralised the map shows its own warm light.
-   Next: Nacht's own light grid, lights and reflection probes (the gun still picks up a green tint, likely from
-   Nuketown's probe cubemaps); then Nacht's normal maps, mips, sky.
+   Next (optional polish): Nacht's own light grid, lights and probe cubemaps; then Nacht's normal maps, mips, sky.
 2. **Props and windows: new assets.** Copy XModels/XAnims/zbarriers between zones with references rewritten (the
    relocating rebuild can add asset-list entries and script strings): Nacht's props, TranZit's
    `zmcore_basicwoodbarrier` and its 12 board animations (then `nacht_ents.py --windows`).
@@ -183,11 +182,15 @@ visibility data / static model instances copied); with `--materials` also the ma
   light count.
 * ComWorld (com_map, asset type 14): header 16 B, name, then ComPrimaryLight records of 0xC4 B (type u8: 1 sun,
   2 spot, 5 omni; colour vec3 at +8). Nuketown's are cyan and green and placed in its coordinates.
-* What made Nacht dark and green: Nuketown's grid (blue-green, red ~30% low) lit models; surfaces kept BO1's
-  primary light and probe indices, which picked Nuketown's lights (green/cyan, overexposed walls) and probes.
+* Reflection probes (GfxWorld 0x18C count, 0x190 array): 0x50 B each: origin, 12 floats of lighting terms (the
+  first three an rgb balance, mean ~1), image 0x3C (-1: header follows; Nuketown's pixels stream from its ipak
+  except `*reflection_probe0`, 0x18000 B inline), volumes, count, mip bias 0x4C. Cells list probe indices (bytes).
+* What made Nacht dark and green: Nuketown's grid (blue-green, red ~30% low) lit models; surfaces and cells kept
+  BO1's primary light and probe indices, which picked Nuketown's lights (green/cyan, overexposed walls) and probes
+  (one is strongly green: the gun's tint). The probes' rgb balance terms were not the cause.
 * For now: every grid sample is the same grey (`--grid-level`, default 0.3 x Nuketown's median), Nuketown's primary
-  lights (sun included) are dark, surfaces use light 0 and probe 0 (`--surface-lights` / `--surface-probes` keep
-  BO1's indices; `--keep-lighting` skips all of it). Lightmap gain 3 is right with these.
+  lights (sun included) are dark, surfaces use light 0 and surfaces and cells probe 0 (`--surface-lights` /
+  `--surface-probes` keep BO1's indices; `--keep-lighting` skips the grid and lights). Lightmap gain 3 fits.
 
 ### Materials (`t6mat.py`)
 

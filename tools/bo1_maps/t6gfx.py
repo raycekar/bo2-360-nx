@@ -34,7 +34,7 @@ BASE = {
 BLOCK = 5
 # a surface's primary light index is BO1's numbering, which picks one of the base map's lights; False: none (0)
 SURFACE_LIGHTS = True
-SURFACE_PROBES = True  # likewise the reflection probe index; False: probe 0
+SURFACE_PROBES = True  # likewise the reflection probe indices (surfaces, cell lists); False: probe 0
 
 
 def u32(v):
@@ -208,7 +208,7 @@ def convert(m, h, data, material=None, mats=None):
                     if vb:
                         o.put(vb, 3)
             if rcount:
-                o.put(m.read(rptr, rcount), 0)
+                o.put(m.read(rptr, rcount) if SURFACE_PROBES else bytes(rcount), 0)  # BO1 probe indices
         o.align(3)  # the reflection probes follow
         return extra
 
